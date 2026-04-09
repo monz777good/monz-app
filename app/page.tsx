@@ -69,11 +69,28 @@ function statusColor(status?: string | null) {
   return 'bg-slate-200 text-black'
 }
 
+function normalizeNameList(raw?: string | null) {
+  if (!raw) return []
+  return raw
+    .split(/[,\n/|]+/)
+    .flatMap((chunk) => chunk.split(/\s+/))
+    .map((v) => v.trim())
+    .filter(Boolean)
+}
+
+function matchesTarget(targetName: string | null | undefined, writerName: string) {
+  const me = writerName.trim()
+  if (!me) return false
+  const list = normalizeNameList(targetName)
+  return list.includes('전체') || list.includes(me)
+}
+
 export default function Home() {
   const today = useMemo(() => getKSTDateString(), [])
 
   const [writerName, setWriterName] = useState('')
   const [dailyContent, setDailyContent] = useState('')
+  const [weeklyContent, setWeeklyContent] = useState('')
   const [loading, setLoading] = useState(false)
 
   const [isOwnerView, setIsOwnerView] = useState(false)
@@ -95,7 +112,7 @@ export default function Home() {
     date: today,
   })
 
-  const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '연차/월차' | '업무지시'>('전체')
+  const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차' | '업무지시'>('전체')
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
   const [fromDate, setFromDate] = useState(today)
   const [toDate, setToDate] = useState(today)
@@ -139,12 +156,11 @@ export default function Home() {
     return () => clearInterval(timer)
   }, [fetchTasks])
 
-  const handleFinalSubmit = async () => {
+  const handleDailySubmit = async () => {
     if (!writerName.trim()) {
       alert('이름 써주세요!')
       return
     }
-
     if (!dailyContent.trim()) {
       alert('업무 내용을 입력해주세요!')
       return
@@ -164,22 +180,53 @@ export default function Home() {
     setLoading(false)
 
     if (error) {
-      console.error('handleFinalSubmit error:', error)
-      alert(`보고 등록 실패: ${error.message}`)
+      alert(`일일업무 등록 실패: ${error.message}`)
       return
     }
 
-    alert('보고 완료!')
+    alert('일일업무 등록 완료!')
     setDailyContent('')
+    await fetchTasks()
+  }
+
+  const handleWeeklySubmit = async () => {
+    if (!writerName.trim()) {
+      alert('이름 써주세요!')
+      return
+    }
+    if (!weeklyContent.trim()) {
+      alert('주간계획 내용을 입력해주세요!')
+      return
+    }
+
+    setLoading(true)
+
+    const { error } = await supabase.from('MONZ').insert([
+      {
+        user_name: writerName.trim(),
+        task_content: weeklyContent.trim(),
+        type: '주간계획',
+        created_at: new Date().toISOString(),
+      },
+    ])
+
+    setLoading(false)
+
+    if (error) {
+      alert(`주간계획 등록 실패: ${error.message}`)
+      return
+    }
+
+    alert('주간계획 등록 완료!')
+    setWeeklyContent('')
     await fetchTasks()
   }
 
   const handleOrderSubmit = async () => {
     if (!isOwnerView) {
-      alert('관리자 인증부터 해주세요!')
+      alert('사장님 인증부터 해주세요!')
       return
     }
-
     if (!orderData.to.trim() || !orderData.content.trim()) {
       alert('직원명과 지시 내용을 입력해주세요!')
       return
@@ -201,7 +248,6 @@ export default function Home() {
     setLoading(false)
 
     if (error) {
-      console.error('handleOrderSubmit error:', error)
       alert(`업무지시 등록 실패: ${error.message}`)
       return
     }
@@ -217,7 +263,6 @@ export default function Home() {
       alert('이름부터 입력해주세요!')
       return
     }
-
     if (!leaveData.date || !leaveData.content.trim()) {
       alert('날짜와 사유를 입력해주세요!')
       return
@@ -238,7 +283,6 @@ export default function Home() {
     setLoading(false)
 
     if (error) {
-      console.error('handleLeaveSubmit error:', error)
       alert(`연차/월차 등록 실패: ${error.message}`)
       return
     }
@@ -249,7 +293,10 @@ export default function Home() {
     await fetchTasks()
   }
 
-  const updateInstructionStatus = async (taskId: number, nextStatus: '확인' | '진행중' | '완료') => {
+  const updateInstructionStatus = async (
+    taskId: number,
+    nextStatus: '확인' | '진행중' | '완료'
+  ) => {
     const { error } = await supabase
       .from('MONZ')
       .update({
@@ -259,7 +306,6 @@ export default function Home() {
       .eq('id', taskId)
 
     if (error) {
-      console.error('updateInstructionStatus error:', error)
       alert(`상태 변경 실패: ${error.message}`)
       return
     }
@@ -269,11 +315,8 @@ export default function Home() {
 
   const myInstructions = tasks.filter((task) => {
     if (task.type !== '업무지시') return false
-    if (!writerName.trim()) return false
-    return task.target_name === writerName.trim() || task.target_name === '전체'
+    return matchesTarget(task.target_name, writerName)
   })
-
-  const activeInstructions = myInstructions.filter((task) => task.instruction_status !== '완료')
 
   const filteredTasks = tasks.filter((task) => {
     if (ownerTab !== '전체') {
@@ -340,24 +383,21 @@ export default function Home() {
         <div className="mt-4 text-xl font-black text-amber-300">{today} 업무보고 시스템</div>
       </header>
 
-      {/* 직원 전용 상단 가운데 업무지시 확인 카드 */}
-      {writerName.trim() && activeInstructions.length > 0 && (
+      {writerName.trim() && myInstructions.length > 0 && (
         <div className="max-w-5xl mx-auto mb-6">
-          <div className="bg-amber-50 border-2 border-black rounded-2xl p-5 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+          <div className="bg-stone-100 border-2 border-black rounded-2xl p-5 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
             <div className="text-center text-2xl font-black text-amber-600 mb-4">
               📢 업무지시 확인하기
             </div>
 
             <div className="space-y-4">
-              {activeInstructions.map((task) => (
+              {myInstructions.map((task) => (
                 <div
                   key={task.id}
-                  className="bg-white border-2 border-black rounded-2xl p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
+                  className="bg-white border-2 border-black rounded-2xl p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 >
                   <div className="flex flex-wrap justify-between gap-3 mb-3">
-                    <div className="font-black">
-                      대상: {task.target_name || '전체'}
-                    </div>
+                    <div className="font-black">대상: {task.target_name || '전체'}</div>
                     <div className="text-sm font-black text-slate-500">
                       {formatKSTDateTime(task.created_at)}
                     </div>
@@ -366,11 +406,16 @@ export default function Home() {
                   <div className="font-bold whitespace-pre-wrap mb-4">{task.task_content}</div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`px-3 py-1 rounded-full text-xs font-black border border-black ${statusColor(task.instruction_status)}`}>
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-black border border-black ${statusColor(
+                        task.instruction_status
+                      )}`}
+                    >
                       상태: {task.instruction_status || '대기'}
                     </span>
 
                     <button
+                      type="button"
                       onClick={() => updateInstructionStatus(task.id, '확인')}
                       className="px-3 py-2 rounded-lg border-2 border-black bg-sky-100 font-black text-sm"
                     >
@@ -378,6 +423,7 @@ export default function Home() {
                     </button>
 
                     <button
+                      type="button"
                       onClick={() => updateInstructionStatus(task.id, '진행중')}
                       className="px-3 py-2 rounded-lg border-2 border-black bg-amber-100 font-black text-sm"
                     >
@@ -385,6 +431,7 @@ export default function Home() {
                     </button>
 
                     <button
+                      type="button"
                       onClick={() => updateInstructionStatus(task.id, '완료')}
                       className="px-3 py-2 rounded-lg border-2 border-black bg-emerald-100 font-black text-sm"
                     >
@@ -409,6 +456,7 @@ export default function Home() {
 
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="bg-white p-6 rounded-2xl border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+          <h2 className="text-xl font-black mb-3">📝 일일업무보고</h2>
           <textarea
             className="w-full h-40 p-4 border-2 border-black rounded-xl font-bold bg-white text-black"
             placeholder="업무 내용을 입력하세요..."
@@ -416,11 +464,28 @@ export default function Home() {
             onChange={(e) => setDailyContent(e.target.value)}
           />
           <button
-            onClick={handleFinalSubmit}
+            onClick={handleDailySubmit}
             disabled={loading}
             className="w-full mt-4 bg-black text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60"
           >
             {loading ? '등록 중...' : '오늘 보고 등록'}
+          </button>
+        </div>
+
+        <div className="bg-white p-6 rounded-2xl border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+          <h2 className="text-xl font-black mb-3 text-indigo-700">📅 주간계획업무</h2>
+          <textarea
+            className="w-full h-32 p-4 border-2 border-black rounded-xl font-bold bg-white text-black"
+            placeholder="이번 주 계획 업무를 입력하세요..."
+            value={weeklyContent}
+            onChange={(e) => setWeeklyContent(e.target.value)}
+          />
+          <button
+            onClick={handleWeeklySubmit}
+            disabled={loading}
+            className="w-full mt-4 bg-indigo-700 text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60"
+          >
+            {loading ? '등록 중...' : '주간계획 등록'}
           </button>
         </div>
 
@@ -458,7 +523,7 @@ export default function Home() {
             {isOwnerView && (
               <>
                 <div className="flex flex-wrap gap-2">
-                  {(['전체', '일일업무', '연차/월차', '업무지시'] as const).map((tab) => (
+                  {(['전체', '일일업무', '주간계획', '연차/월차', '업무지시'] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setOwnerTab(tab)}
@@ -631,7 +696,9 @@ export default function Home() {
                               ? 'bg-amber-400'
                               : task.type === '연차' || task.type === '월차'
                                 ? 'bg-rose-200'
-                                : 'bg-slate-100'
+                                : task.type === '주간계획'
+                                  ? 'bg-indigo-200'
+                                  : 'bg-slate-100'
                           }`}
                         >
                           {task.type}
@@ -644,7 +711,11 @@ export default function Home() {
                         )}
 
                         {task.type === '업무지시' && (
-                          <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>
+                          <span
+                            className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(
+                              task.instruction_status
+                            )}`}
+                          >
                             상태: {task.instruction_status || '대기'}
                           </span>
                         )}
@@ -681,7 +752,7 @@ export default function Home() {
 
             <input
               className="w-full mb-2 p-3 border-2 border-black rounded-lg font-bold"
-              placeholder="직원명 (예: 이현택 / 전체)"
+              placeholder="직원명 (예: 이현택,김철수 또는 전체)"
               value={orderData.to}
               onChange={(e) => setOrderData({ ...orderData, to: e.target.value })}
             />
