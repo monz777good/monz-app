@@ -13,7 +13,7 @@ type TaskRow = {
   user_name: string
   task_content: string
   type: string
-  created_at: string
+  created_at?: string | null
 }
 
 export default function Home() {
@@ -38,8 +38,19 @@ export default function Home() {
     return kst.toISOString().slice(0, 10)
   }, [])
 
-  const formatDateTime = (value: string) => {
-    if (!value) return '-'
+  useEffect(() => {
+    const savedName = localStorage.getItem('monz_name')
+    if (savedName) setWriterName(savedName)
+    setLeaveData((prev) => ({ ...prev, date: today }))
+    fetchData()
+  }, [today])
+
+  useEffect(() => {
+    localStorage.setItem('monz_name', writerName)
+  }, [writerName])
+
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return '방금 등록'
     const d = new Date(value)
     if (Number.isNaN(d.getTime())) return value
     return new Intl.DateTimeFormat('ko-KR', {
@@ -52,44 +63,33 @@ export default function Home() {
     }).format(d)
   }
 
-  useEffect(() => {
-    const savedName = localStorage.getItem('monz_name')
-    if (savedName) setWriterName(savedName)
-    setLeaveData((prev) => ({ ...prev, date: today }))
-    fetchData()
-
-    const channel = supabase
-      .channel('monz-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'MONZ' },
-        () => {
-          fetchData()
-        }
-      )
-      .subscribe()
-
-    return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [today])
-
-  useEffect(() => {
-    localStorage.setItem('monz_name', writerName)
-  }, [writerName])
-
   const fetchData = async () => {
-    const { data, error } = await supabase
+    // 1차: created_at 기준 정렬 시도
+    const first = await supabase
       .from('MONZ')
       .select('id, user_name, task_content, type, created_at')
       .order('created_at', { ascending: false })
 
-    if (error) {
-      console.error('fetchData error:', error)
+    if (!first.error) {
+      setTasks((first.data as TaskRow[]) || [])
       return
     }
 
-    setTasks((data as TaskRow[]) || [])
+    console.error('fetchData created_at error:', first.error)
+
+    // 2차: created_at 컬럼/정렬 문제가 있으면 id 기준으로 fallback
+    const second = await supabase
+      .from('MONZ')
+      .select('id, user_name, task_content, type')
+      .order('id', { ascending: false })
+
+    if (second.error) {
+      console.error('fetchData fallback error:', second.error)
+      alert(`목록 불러오기 실패: ${second.error.message}`)
+      return
+    }
+
+    setTasks(((second.data as any[]) || []).map((row) => ({ ...row, created_at: null })))
   }
 
   const handleFinalSubmit = async () => {
@@ -105,20 +105,19 @@ export default function Home() {
 
     setLoading(true)
 
-    const payload = {
-      user_name: writerName.trim(),
-      task_content: dailyContent.trim(),
-      type: '일일업무',
-      created_at: new Date().toISOString(),
-    }
-
-    const { error } = await supabase.from('MONZ').insert([payload])
+    const { error } = await supabase.from('MONZ').insert([
+      {
+        user_name: writerName.trim(),
+        task_content: dailyContent.trim(),
+        type: '일일업무',
+      },
+    ])
 
     setLoading(false)
 
     if (error) {
       console.error('handleFinalSubmit error:', error)
-      alert(`등록 실패: ${error.message}`)
+      alert(`보고 등록 실패: ${error.message}`)
       return
     }
 
@@ -140,20 +139,19 @@ export default function Home() {
 
     setLoading(true)
 
-    const payload = {
-      user_name: `[지시] To.${orderData.to.trim()}`,
-      task_content: orderData.content.trim(),
-      type: '업무지시',
-      created_at: new Date().toISOString(),
-    }
-
-    const { error } = await supabase.from('MONZ').insert([payload])
+    const { error } = await supabase.from('MONZ').insert([
+      {
+        user_name: `[지시] To.${orderData.to.trim()}`,
+        task_content: orderData.content.trim(),
+        type: '업무지시',
+      },
+    ])
 
     setLoading(false)
 
     if (error) {
       console.error('handleOrderSubmit error:', error)
-      alert(`지시 등록 실패: ${error.message}`)
+      alert(`업무지시 등록 실패: ${error.message}`)
       return
     }
 
@@ -176,20 +174,19 @@ export default function Home() {
 
     setLoading(true)
 
-    const payload = {
-      user_name: writerName.trim(),
-      task_content: `[${leaveData.type}] ${leaveData.content.trim()}`,
-      type: leaveData.type,
-      created_at: new Date(`${leaveData.date}T09:00:00+09:00`).toISOString(),
-    }
-
-    const { error } = await supabase.from('MONZ').insert([payload])
+    const { error } = await supabase.from('MONZ').insert([
+      {
+        user_name: writerName.trim(),
+        task_content: `[${leaveData.type}] ${leaveData.date} / ${leaveData.content.trim()}`,
+        type: leaveData.type,
+      },
+    ])
 
     setLoading(false)
 
     if (error) {
       console.error('handleLeaveSubmit error:', error)
-      alert(`신청 실패: ${error.message}`)
+      alert(`연차/월차 등록 실패: ${error.message}`)
       return
     }
 
@@ -217,27 +214,29 @@ export default function Home() {
         </button>
       </div>
 
-      <header className="max-w-4xl mx-auto mb-10 bg-teal-700 rounded-[2rem] p-8 text-white text-center shadow-lg">
+      <header className="max-w-4xl mx-auto mb-6 bg-teal-700 rounded-[2rem] p-8 text-white text-center shadow-lg">
         <h1 className="text-3xl font-bold text-white">한의N원외탕전</h1>
         <div className="mt-4 text-xl font-black text-amber-300">{today} 업무보고 시스템</div>
       </header>
 
+      {/* 이름칸을 헤더 바로 아래로 이동 */}
+      <div className="max-w-4xl mx-auto mb-6">
+        <input
+          className="w-full p-3 border-2 border-black rounded-xl font-bold bg-white text-black"
+          placeholder="성함"
+          value={writerName}
+          onChange={(e) => setWriterName(e.target.value)}
+        />
+      </div>
+
       <div className="max-w-4xl mx-auto space-y-6">
         <div className="bg-white p-6 rounded-2xl border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-          <input
-            className="w-full mb-4 p-3 border-2 border-black rounded-xl font-bold bg-white text-black"
-            placeholder="성함"
-            value={writerName}
-            onChange={(e) => setWriterName(e.target.value)}
-          />
-
           <textarea
             className="w-full h-40 p-4 border-2 border-black rounded-xl font-bold bg-white text-black"
             placeholder="업무 내용을 입력하세요..."
             value={dailyContent}
             onChange={(e) => setDailyContent(e.target.value)}
           />
-
           <button
             onClick={handleFinalSubmit}
             disabled={loading}
@@ -256,7 +255,7 @@ export default function Home() {
                 <input
                   type="password"
                   placeholder="PIN"
-                  className="w-16 bg-transparent text-white text-center font-bold outline-none"
+                  className="w-20 bg-transparent text-white text-center font-bold outline-none"
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                 />
