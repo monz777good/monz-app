@@ -16,14 +16,11 @@ type TaskRow = {
   created_at?: string | null
   leave_date?: string | null
   target_name?: string | null
+  instruction_status?: string | null
+  instruction_checked_at?: string | null
 }
 
 const OWNER_PIN = '1919'
-
-function getKSTNow() {
-  const now = new Date()
-  return new Date(now.getTime() + 9 * 60 * 60 * 1000)
-}
 
 function getKSTDateString(date = new Date()) {
   const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000)
@@ -65,6 +62,13 @@ function getTaskKSTDate(task: TaskRow) {
   return kst.toISOString().slice(0, 10)
 }
 
+function statusColor(status?: string | null) {
+  if (status === '완료') return 'bg-emerald-500 text-white'
+  if (status === '진행중') return 'bg-amber-400 text-black'
+  if (status === '확인') return 'bg-sky-500 text-white'
+  return 'bg-slate-200 text-black'
+}
+
 export default function Home() {
   const today = useMemo(() => getKSTDateString(), [])
 
@@ -79,8 +83,6 @@ export default function Home() {
 
   const [showOrderModal, setShowOrderModal] = useState(false)
   const [showLeaveModal, setShowLeaveModal] = useState(false)
-  const [showInstructionAlert, setShowInstructionAlert] = useState(false)
-  const [latestInstruction, setLatestInstruction] = useState<TaskRow | null>(null)
 
   const [orderData, setOrderData] = useState({
     to: '',
@@ -114,7 +116,9 @@ export default function Home() {
   const fetchTasks = useCallback(async () => {
     const { data, error } = await supabase
       .from('MONZ')
-      .select('id, user_name, task_content, type, created_at, leave_date, target_name')
+      .select(
+        'id, user_name, task_content, type, created_at, leave_date, target_name, instruction_status, instruction_checked_at'
+      )
       .order('created_at', { ascending: false })
 
     if (error) {
@@ -126,47 +130,14 @@ export default function Home() {
     setTasks((data as TaskRow[]) || [])
   }, [])
 
-  const checkInstructionAlert = useCallback(async () => {
-    if (!writerName.trim()) return
-
-    const { data, error } = await supabase
-      .from('MONZ')
-      .select('id, user_name, task_content, type, created_at, leave_date, target_name')
-      .eq('type', '업무지시')
-      .or(`target_name.eq.${writerName.trim()},target_name.eq.전체`)
-      .order('created_at', { ascending: false })
-      .limit(1)
-
-    if (error) {
-      console.error('checkInstructionAlert error:', error)
-      return
-    }
-
-    const row = (data as TaskRow[])[0]
-    if (!row) return
-
-    const lastSeen = localStorage.getItem(`monz_last_instruction_${writerName.trim()}`)
-    if (String(row.id) !== lastSeen) {
-      setLatestInstruction(row)
-      setShowInstructionAlert(true)
-    }
-  }, [writerName])
-
   useEffect(() => {
     fetchTasks()
     const timer = setInterval(() => {
       fetchTasks()
-      checkInstructionAlert()
     }, 10000)
 
     return () => clearInterval(timer)
-  }, [fetchTasks, checkInstructionAlert])
-
-  useEffect(() => {
-    if (writerName.trim()) {
-      checkInstructionAlert()
-    }
-  }, [writerName, checkInstructionAlert])
+  }, [fetchTasks])
 
   const handleFinalSubmit = async () => {
     if (!writerName.trim()) {
@@ -222,6 +193,7 @@ export default function Home() {
         task_content: orderData.content.trim(),
         type: '업무지시',
         target_name: orderData.to.trim(),
+        instruction_status: '대기',
         created_at: new Date().toISOString(),
       },
     ])
@@ -277,12 +249,31 @@ export default function Home() {
     await fetchTasks()
   }
 
-  const handleInstructionSeen = () => {
-    if (writerName.trim() && latestInstruction) {
-      localStorage.setItem(`monz_last_instruction_${writerName.trim()}`, String(latestInstruction.id))
+  const updateInstructionStatus = async (taskId: number, nextStatus: '확인' | '진행중' | '완료') => {
+    const { error } = await supabase
+      .from('MONZ')
+      .update({
+        instruction_status: nextStatus,
+        instruction_checked_at: new Date().toISOString(),
+      })
+      .eq('id', taskId)
+
+    if (error) {
+      console.error('updateInstructionStatus error:', error)
+      alert(`상태 변경 실패: ${error.message}`)
+      return
     }
-    setShowInstructionAlert(false)
+
+    await fetchTasks()
   }
+
+  const myInstructions = tasks.filter((task) => {
+    if (task.type !== '업무지시') return false
+    if (!writerName.trim()) return false
+    return task.target_name === writerName.trim() || task.target_name === '전체'
+  })
+
+  const activeInstructions = myInstructions.filter((task) => task.instruction_status !== '완료')
 
   const filteredTasks = tasks.filter((task) => {
     if (ownerTab !== '전체') {
@@ -348,6 +339,64 @@ export default function Home() {
         <h1 className="text-3xl font-bold text-white">한의N원외탕전</h1>
         <div className="mt-4 text-xl font-black text-amber-300">{today} 업무보고 시스템</div>
       </header>
+
+      {/* 직원 전용 상단 가운데 업무지시 확인 카드 */}
+      {writerName.trim() && activeInstructions.length > 0 && (
+        <div className="max-w-5xl mx-auto mb-6">
+          <div className="bg-amber-50 border-2 border-black rounded-2xl p-5 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+            <div className="text-center text-2xl font-black text-amber-600 mb-4">
+              📢 업무지시 확인하기
+            </div>
+
+            <div className="space-y-4">
+              {activeInstructions.map((task) => (
+                <div
+                  key={task.id}
+                  className="bg-white border-2 border-black rounded-2xl p-4 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
+                >
+                  <div className="flex flex-wrap justify-between gap-3 mb-3">
+                    <div className="font-black">
+                      대상: {task.target_name || '전체'}
+                    </div>
+                    <div className="text-sm font-black text-slate-500">
+                      {formatKSTDateTime(task.created_at)}
+                    </div>
+                  </div>
+
+                  <div className="font-bold whitespace-pre-wrap mb-4">{task.task_content}</div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`px-3 py-1 rounded-full text-xs font-black border border-black ${statusColor(task.instruction_status)}`}>
+                      상태: {task.instruction_status || '대기'}
+                    </span>
+
+                    <button
+                      onClick={() => updateInstructionStatus(task.id, '확인')}
+                      className="px-3 py-2 rounded-lg border-2 border-black bg-sky-100 font-black text-sm"
+                    >
+                      확인
+                    </button>
+
+                    <button
+                      onClick={() => updateInstructionStatus(task.id, '진행중')}
+                      className="px-3 py-2 rounded-lg border-2 border-black bg-amber-100 font-black text-sm"
+                    >
+                      진행중
+                    </button>
+
+                    <button
+                      onClick={() => updateInstructionStatus(task.id, '완료')}
+                      className="px-3 py-2 rounded-lg border-2 border-black bg-emerald-100 font-black text-sm"
+                    >
+                      완료
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-5xl mx-auto mb-6">
         <input
@@ -594,6 +643,12 @@ export default function Home() {
                           </span>
                         )}
 
+                        {task.type === '업무지시' && (
+                          <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>
+                            상태: {task.instruction_status || '대기'}
+                          </span>
+                        )}
+
                         {(task.type === '연차' || task.type === '월차') && task.leave_date && (
                           <span className="text-xs font-black text-slate-500">
                             신청일: {formatKSTDateOnly(task.leave_date)}
@@ -698,29 +753,6 @@ export default function Home() {
                 취소
               </button>
             </div>
-          </div>
-        </div>
-      )}
-
-      {showInstructionAlert && latestInstruction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4 text-black">
-          <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-md shadow-2xl">
-            <div className="text-2xl font-black mb-3 text-amber-500">📢 새 업무지시</div>
-            <div className="font-black mb-2">
-              대상: {latestInstruction.target_name || '전체'}
-            </div>
-            <div className="font-bold whitespace-pre-wrap rounded-xl bg-slate-50 border-2 border-black p-4">
-              {latestInstruction.task_content}
-            </div>
-            <div className="mt-3 text-sm font-black text-slate-500">
-              {formatKSTDateTime(latestInstruction.created_at)}
-            </div>
-            <button
-              onClick={handleInstructionSeen}
-              className="w-full mt-4 bg-black text-white py-3 rounded-xl font-black"
-            >
-              확인
-            </button>
           </div>
         </div>
       )}
