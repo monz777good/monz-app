@@ -91,6 +91,7 @@ export default function Home() {
   const [writerName, setWriterName] = useState('')
   const [dailyContent, setDailyContent] = useState('')
   const [weeklyContent, setWeeklyContent] = useState('')
+  const [draftLoaded, setDraftLoaded] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const [isOwnerView, setIsOwnerView] = useState(false)
@@ -120,33 +121,6 @@ export default function Home() {
   const [calendarMonth, setCalendarMonth] = useState(today.slice(0, 7))
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(today)
 
-  // [기능 추가] 초기 로드 시 자동 저장된 내용 불러오기
-  useEffect(() => {
-    const savedName = localStorage.getItem('monz_name')
-    if (savedName) setWriterName(savedName)
-    
-    const savedDaily = localStorage.getItem('monz_daily_content')
-    if (savedDaily) setDailyContent(savedDaily)
-
-    const savedWeekly = localStorage.getItem('monz_weekly_content')
-    if (savedWeekly) setWeeklyContent(savedWeekly)
-
-    fetchTasks()
-  }, [])
-
-  useEffect(() => {
-    localStorage.setItem('monz_name', writerName)
-  }, [writerName])
-
-  // [기능 추가] 입력할 때마다 브라우저에 임시 저장
-  useEffect(() => {
-    localStorage.setItem('monz_daily_content', dailyContent)
-  }, [dailyContent])
-
-  useEffect(() => {
-    localStorage.setItem('monz_weekly_content', weeklyContent)
-  }, [weeklyContent])
-
   const fetchTasks = useCallback(async () => {
     const { data, error } = await supabase
       .from('MONZ')
@@ -163,6 +137,34 @@ export default function Home() {
 
     setTasks((data as TaskRow[]) || [])
   }, [])
+
+  useEffect(() => {
+    const savedName = localStorage.getItem('monz_name')
+    const savedDaily = localStorage.getItem('monz_daily_content')
+    const savedWeekly = localStorage.getItem('monz_weekly_content')
+
+    if (savedName) setWriterName(savedName)
+    if (savedDaily) setDailyContent(savedDaily)
+    if (savedWeekly) setWeeklyContent(savedWeekly)
+
+    setDraftLoaded(true)
+    fetchTasks()
+  }, [fetchTasks])
+
+  useEffect(() => {
+    if (!draftLoaded) return
+    localStorage.setItem('monz_name', writerName)
+  }, [writerName, draftLoaded])
+
+  useEffect(() => {
+    if (!draftLoaded) return
+    localStorage.setItem('monz_daily_content', dailyContent)
+  }, [dailyContent, draftLoaded])
+
+  useEffect(() => {
+    if (!draftLoaded) return
+    localStorage.setItem('monz_weekly_content', weeklyContent)
+  }, [weeklyContent, draftLoaded])
 
   useEffect(() => {
     fetchTasks()
@@ -203,7 +205,7 @@ export default function Home() {
 
     alert('일일업무 등록 완료!')
     setDailyContent('')
-    localStorage.removeItem('monz_daily_content') // 제출 성공 시 임시 저장 삭제
+    localStorage.removeItem('monz_daily_content')
     await fetchTasks()
   }
 
@@ -237,18 +239,17 @@ export default function Home() {
 
     alert('주간계획 등록 완료!')
     setWeeklyContent('')
-    localStorage.removeItem('monz_weekly_content') // 제출 성공 시 임시 저장 삭제
+    localStorage.removeItem('monz_weekly_content')
     await fetchTasks()
   }
 
-  // 아래 나머지 코드는 동일하므로 생략하지 않고 원본 그대로 유지 (복사 편의를 위해)
   const handleOrderSubmit = async () => {
     if (!isOwnerView) { alert('사장님 인증부터 해주세요!'); return; }
     if (!orderData.to.trim() || !orderData.content.trim()) { alert('직원명과 지시 내용을 입력해주세요!'); return; }
     setLoading(true)
     const { error } = await supabase.from('MONZ').insert([{
-        user_name: '사장님', task_content: orderData.content.trim(), type: '업무지시',
-        target_name: orderData.to.trim(), instruction_status: '대기', created_at: new Date().toISOString(),
+      user_name: '사장님', task_content: orderData.content.trim(), type: '업무지시',
+      target_name: orderData.to.trim(), instruction_status: '대기', created_at: new Date().toISOString(),
     }])
     setLoading(false)
     if (error) { alert(`업무지시 등록 실패: ${error.message}`); return; }
@@ -260,8 +261,8 @@ export default function Home() {
     if (!leaveData.date || !leaveData.content.trim()) { alert('날짜와 사유를 입력해주세요!'); return; }
     setLoading(true)
     const { error } = await supabase.from('MONZ').insert([{
-        user_name: writerName.trim(), task_content: leaveData.content.trim(), type: leaveData.type,
-        leave_date: leaveData.date, created_at: new Date().toISOString(),
+      user_name: writerName.trim(), task_content: leaveData.content.trim(), type: leaveData.type,
+      leave_date: leaveData.date, created_at: new Date().toISOString(),
     }])
     setLoading(false)
     if (error) { alert(`연차/월차 등록 실패: ${error.message}`); return; }
@@ -413,10 +414,10 @@ export default function Home() {
                       <div className="font-black mb-3">선택 날짜: {formatKSTDateOnly(selectedCalendarDate)}</div>
                       <div className="space-y-3">
                         {(leaveTaskMap[selectedCalendarDate] || []).length === 0 ? <div className="font-bold text-slate-400">이 날짜의 연차/월차 신청이 없습니다.</div> : (leaveTaskMap[selectedCalendarDate] || []).map((task) => (
-                            <div key={task.id} className="rounded-xl border-2 border-black bg-white p-3 flex justify-between gap-4">
-                              <div><div className="font-black">[{task.type}] {task.user_name}</div><div className="font-bold mt-1 whitespace-pre-wrap">{task.task_content}</div></div>
-                              <div className="font-black text-sm whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
-                            </div>
+                          <div key={task.id} className="rounded-xl border-2 border-black bg-white p-3 flex justify-between gap-4">
+                            <div><div className="font-black">[{task.type}] {task.user_name}</div><div className="font-bold mt-1 whitespace-pre-wrap">{task.task_content}</div></div>
+                            <div className="font-black text-sm whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -429,17 +430,17 @@ export default function Home() {
           {isOwnerView ? (
             <div className="space-y-4 px-2">
               {filteredTasks.length === 0 ? <div className="bg-white p-10 rounded-2xl border-2 border-black text-center font-bold text-slate-400">등록된 항목이 없습니다.</div> : filteredTasks.map((task) => (
-                  <div key={task.id} className="p-5 rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-black">
-                    <div className="flex justify-between mb-2 gap-4">
-                      <div className="flex gap-2 items-center flex-wrap">
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border border-black ${task.type === '업무지시' ? 'bg-amber-400' : task.type === '연차' || task.type === '월차' ? 'bg-rose-200' : task.type === '주간계획' ? 'bg-indigo-200' : 'bg-slate-100'}`}>{task.type}</span>
-                        {task.type === '업무지시' && <><span className="text-xs font-black text-slate-500">대상: {task.target_name}</span><span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>상태: {task.instruction_status || '대기'}</span></>}
-                        {(task.type === '연차' || task.type === '월차') && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
-                      </div>
-                      <span className="font-black text-sm text-right whitespace-nowrap">{task.user_name} | {formatKSTDateTime(task.created_at)}</span>
+                <div key={task.id} className="p-5 rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-black">
+                  <div className="flex justify-between mb-2 gap-4">
+                    <div className="flex gap-2 items-center flex-wrap">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border border-black ${task.type === '업무지시' ? 'bg-amber-400' : task.type === '연차' || task.type === '월차' ? 'bg-rose-200' : task.type === '주간계획' ? 'bg-indigo-200' : 'bg-slate-100'}`}>{task.type}</span>
+                      {task.type === '업무지시' && <><span className="text-xs font-black text-slate-500">대상: {task.target_name}</span><span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>상태: {task.instruction_status || '대기'}</span></>}
+                      {(task.type === '연차' || task.type === '월차') && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
                     </div>
-                    <p className="font-bold whitespace-pre-wrap">{task.task_content}</p>
+                    <span className="font-black text-sm text-right whitespace-nowrap">{task.user_name} | {formatKSTDateTime(task.created_at)}</span>
                   </div>
+                  <p className="font-bold whitespace-pre-wrap">{task.task_content}</p>
+                </div>
               ))}
             </div>
           ) : (
