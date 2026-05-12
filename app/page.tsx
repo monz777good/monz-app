@@ -8,6 +8,8 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 )
 
+type InstructionResultMark = 'CIRCLE' | 'TRIANGLE' | 'X'
+
 type TaskRow = {
   id: number
   user_name: string
@@ -18,6 +20,8 @@ type TaskRow = {
   target_name?: string | null
   instruction_status?: string | null
   instruction_checked_at?: string | null
+  instruction_result_mark?: InstructionResultMark | string | null
+  instruction_result_at?: string | null
 }
 
 const OWNER_PIN = '1919'
@@ -66,6 +70,27 @@ function statusColor(status?: string | null) {
   if (status === '완료') return 'bg-emerald-500 text-white'
   if (status === '진행중') return 'bg-amber-400 text-black'
   if (status === '확인') return 'bg-sky-500 text-white'
+  return 'bg-slate-200 text-black'
+}
+
+function resultLabel(mark?: string | null) {
+  if (mark === 'CIRCLE') return '○'
+  if (mark === 'TRIANGLE') return '△'
+  if (mark === 'X') return '✕'
+  return '미평가'
+}
+
+function resultText(mark?: string | null) {
+  if (mark === 'CIRCLE') return '완료 인정'
+  if (mark === 'TRIANGLE') return '보완 필요'
+  if (mark === 'X') return '미흡'
+  return '미평가'
+}
+
+function resultColor(mark?: string | null) {
+  if (mark === 'CIRCLE') return 'bg-emerald-500 text-white'
+  if (mark === 'TRIANGLE') return 'bg-amber-400 text-black'
+  if (mark === 'X') return 'bg-rose-500 text-white'
   return 'bg-slate-200 text-black'
 }
 
@@ -125,7 +150,7 @@ export default function Home() {
     const { data, error } = await supabase
       .from('MONZ')
       .select(
-        'id, user_name, task_content, type, created_at, leave_date, target_name, instruction_status, instruction_checked_at'
+        'id, user_name, task_content, type, created_at, leave_date, target_name, instruction_status, instruction_checked_at, instruction_result_mark, instruction_result_at'
       )
       .order('created_at', { ascending: false })
 
@@ -249,7 +274,7 @@ export default function Home() {
     setLoading(true)
     const { error } = await supabase.from('MONZ').insert([{
       user_name: '사장님', task_content: orderData.content.trim(), type: '업무지시',
-      target_name: orderData.to.trim(), instruction_status: '대기', created_at: new Date().toISOString(),
+      target_name: orderData.to.trim(), instruction_status: '대기', instruction_result_mark: null, created_at: new Date().toISOString(),
     }])
     setLoading(false)
     if (error) { alert(`업무지시 등록 실패: ${error.message}`); return; }
@@ -272,6 +297,28 @@ export default function Home() {
   const updateInstructionStatus = async (taskId: number, nextStatus: '확인' | '진행중' | '완료') => {
     const { error } = await supabase.from('MONZ').update({ instruction_status: nextStatus, instruction_checked_at: new Date().toISOString() }).eq('id', taskId)
     if (error) { alert(`상태 변경 실패: ${error.message}`); return; }
+    await fetchTasks()
+  }
+
+  const updateInstructionResult = async (taskId: number, nextResult: InstructionResultMark) => {
+    if (!isOwnerView) {
+      alert('사장님 인증 후 평가할 수 있습니다.')
+      return
+    }
+
+    const { error } = await supabase
+      .from('MONZ')
+      .update({
+        instruction_result_mark: nextResult,
+        instruction_result_at: new Date().toISOString(),
+      })
+      .eq('id', taskId)
+
+    if (error) {
+      alert(`평가 저장 실패: ${error.message}`)
+      return
+    }
+
     await fetchTasks()
   }
 
@@ -329,6 +376,9 @@ export default function Home() {
                   <div className="font-bold whitespace-pre-wrap mb-4">{task.task_content}</div>
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={`px-3 py-1 rounded-full text-xs font-black border border-black ${statusColor(task.instruction_status)}`}>상태: {task.instruction_status || '대기'}</span>
+                    <span className={`px-3 py-1 rounded-full text-xs font-black border border-black ${resultColor(task.instruction_result_mark)}`}>
+                      평가: {resultLabel(task.instruction_result_mark)} {task.instruction_result_mark ? `(${resultText(task.instruction_result_mark)})` : ''}
+                    </span>
                     <button type="button" onClick={() => updateInstructionStatus(task.id, '확인')} className="px-3 py-2 rounded-lg border-2 border-black bg-sky-100 font-black text-sm">확인</button>
                     <button type="button" onClick={() => updateInstructionStatus(task.id, '진행중')} className="px-3 py-2 rounded-lg border-2 border-black bg-amber-100 font-black text-sm">진행중</button>
                     <button type="button" onClick={() => updateInstructionStatus(task.id, '완료')} className="px-3 py-2 rounded-lg border-2 border-black bg-emerald-100 font-black text-sm">완료</button>
@@ -434,12 +484,57 @@ export default function Home() {
                   <div className="flex justify-between mb-2 gap-4">
                     <div className="flex gap-2 items-center flex-wrap">
                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border border-black ${task.type === '업무지시' ? 'bg-amber-400' : task.type === '연차' || task.type === '월차' ? 'bg-rose-200' : task.type === '주간계획' ? 'bg-indigo-200' : 'bg-slate-100'}`}>{task.type}</span>
-                      {task.type === '업무지시' && <><span className="text-xs font-black text-slate-500">대상: {task.target_name}</span><span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>상태: {task.instruction_status || '대기'}</span></>}
+                      {task.type === '업무지시' && (
+                        <>
+                          <span className="text-xs font-black text-slate-500">대상: {task.target_name}</span>
+                          <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>상태: {task.instruction_status || '대기'}</span>
+                          <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${resultColor(task.instruction_result_mark)}`}>
+                            평가: {resultLabel(task.instruction_result_mark)}
+                          </span>
+                        </>
+                      )}
                       {(task.type === '연차' || task.type === '월차') && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
                     </div>
                     <span className="font-black text-sm text-right whitespace-nowrap">{task.user_name} | {formatKSTDateTime(task.created_at)}</span>
                   </div>
                   <p className="font-bold whitespace-pre-wrap">{task.task_content}</p>
+
+                  {task.type === '업무지시' && (
+                    <div className="mt-4 rounded-2xl border-2 border-black bg-slate-50 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-black text-sm mr-2">업무결과 평가</span>
+                        <button
+                          type="button"
+                          onClick={() => updateInstructionResult(task.id, 'CIRCLE')}
+                          className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'CIRCLE' ? 'bg-emerald-500 text-white' : 'bg-white'}`}
+                        >
+                          ○
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateInstructionResult(task.id, 'TRIANGLE')}
+                          className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'TRIANGLE' ? 'bg-amber-400 text-black' : 'bg-white'}`}
+                        >
+                          △
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateInstructionResult(task.id, 'X')}
+                          className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'X' ? 'bg-rose-500 text-white' : 'bg-white'}`}
+                        >
+                          ✕
+                        </button>
+                        <span className="ml-2 text-sm font-black text-slate-600">
+                          현재: {resultLabel(task.instruction_result_mark)} {task.instruction_result_mark ? `(${resultText(task.instruction_result_mark)})` : ''}
+                        </span>
+                      </div>
+                      {task.instruction_result_at && (
+                        <div className="mt-2 text-xs font-bold text-slate-500">
+                          평가일시: {formatKSTDateTime(task.instruction_result_at)}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
