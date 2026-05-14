@@ -177,7 +177,9 @@ export default function Home() {
   const [calendarMonth, setCalendarMonth] = useState(today.slice(0, 7))
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(today)
 
+  const [evaluationMode, setEvaluationMode] = useState<'month' | 'year'>('month')
   const [evaluationMonth, setEvaluationMonth] = useState(today.slice(0, 7))
+  const [evaluationYear, setEvaluationYear] = useState(today.slice(0, 4))
 
   const fetchTasks = useCallback(async () => {
     const { data, error } = await supabase
@@ -233,7 +235,7 @@ export default function Home() {
     return () => clearInterval(timer)
   }, [fetchTasks])
 
-  const monthlyEvaluationStats = useMemo(() => {
+  const evaluationStats = useMemo(() => {
     const total = emptyEvaluationCount()
     const byEmployee: Record<string, EvaluationCount> = {}
 
@@ -241,8 +243,19 @@ export default function Home() {
       if (task.type !== '업무지시') return
       if (!task.instruction_result_mark) return
 
-      const evaluatedMonth = getKSTMonthString(task.instruction_result_at || task.created_at)
-      if (evaluatedMonth !== evaluationMonth) return
+      const evaluatedAt = task.instruction_result_at || task.created_at
+      const evaluatedMonth = getKSTMonthString(evaluatedAt)
+      if (!evaluatedMonth) return
+
+      const evaluatedYear = evaluatedMonth.slice(0, 4)
+
+      if (evaluationMode === 'month') {
+        if (evaluatedMonth !== evaluationMonth) return
+      }
+
+      if (evaluationMode === 'year') {
+        if (evaluatedYear !== evaluationYear) return
+      }
 
       addResultCount(total, task.instruction_result_mark)
 
@@ -266,7 +279,7 @@ export default function Home() {
       total,
       employeeRows,
     }
-  }, [tasks, evaluationMonth])
+  }, [tasks, evaluationMode, evaluationMonth, evaluationYear])
 
   const handleDailySubmit = async () => {
     if (!writerName.trim()) {
@@ -337,34 +350,91 @@ export default function Home() {
   }
 
   const handleOrderSubmit = async () => {
-    if (!isOwnerView) { alert('사장님 인증부터 해주세요!'); return; }
-    if (!orderData.to.trim() || !orderData.content.trim()) { alert('직원명과 지시 내용을 입력해주세요!'); return; }
+    if (!isOwnerView) {
+      alert('사장님 인증부터 해주세요!')
+      return
+    }
+    if (!orderData.to.trim() || !orderData.content.trim()) {
+      alert('직원명과 지시 내용을 입력해주세요!')
+      return
+    }
+
     setLoading(true)
-    const { error } = await supabase.from('MONZ').insert([{
-      user_name: '사장님', task_content: orderData.content.trim(), type: '업무지시',
-      target_name: orderData.to.trim(), instruction_status: '대기', instruction_result_mark: null, created_at: new Date().toISOString(),
-    }])
+
+    const { error } = await supabase.from('MONZ').insert([
+      {
+        user_name: '사장님',
+        task_content: orderData.content.trim(),
+        type: '업무지시',
+        target_name: orderData.to.trim(),
+        instruction_status: '대기',
+        instruction_result_mark: null,
+        created_at: new Date().toISOString(),
+      },
+    ])
+
     setLoading(false)
-    if (error) { alert(`업무지시 등록 실패: ${error.message}`); return; }
-    alert('업무지시 등록 완료!'); setOrderData({ to: '', content: '' }); setShowOrderModal(false); await fetchTasks()
+
+    if (error) {
+      alert(`업무지시 등록 실패: ${error.message}`)
+      return
+    }
+
+    alert('업무지시 등록 완료!')
+    setOrderData({ to: '', content: '' })
+    setShowOrderModal(false)
+    await fetchTasks()
   }
 
   const handleLeaveSubmit = async () => {
-    if (!writerName.trim()) { alert('이름부터 입력해주세요!'); return; }
-    if (!leaveData.date || !leaveData.content.trim()) { alert('날짜와 사유를 입력해주세요!'); return; }
+    if (!writerName.trim()) {
+      alert('이름부터 입력해주세요!')
+      return
+    }
+    if (!leaveData.date || !leaveData.content.trim()) {
+      alert('날짜와 사유를 입력해주세요!')
+      return
+    }
+
     setLoading(true)
-    const { error } = await supabase.from('MONZ').insert([{
-      user_name: writerName.trim(), task_content: leaveData.content.trim(), type: leaveData.type,
-      leave_date: leaveData.date, created_at: new Date().toISOString(),
-    }])
+
+    const { error } = await supabase.from('MONZ').insert([
+      {
+        user_name: writerName.trim(),
+        task_content: leaveData.content.trim(),
+        type: leaveData.type,
+        leave_date: leaveData.date,
+        created_at: new Date().toISOString(),
+      },
+    ])
+
     setLoading(false)
-    if (error) { alert(`연차/월차 등록 실패: ${error.message}`); return; }
-    alert('신청 완료!'); setLeaveData({ type: '연차', content: '', date: today }); setShowLeaveModal(false); await fetchTasks()
+
+    if (error) {
+      alert(`연차/월차 등록 실패: ${error.message}`)
+      return
+    }
+
+    alert('신청 완료!')
+    setLeaveData({ type: '연차', content: '', date: today })
+    setShowLeaveModal(false)
+    await fetchTasks()
   }
 
   const updateInstructionStatus = async (taskId: number, nextStatus: '확인' | '진행중' | '완료') => {
-    const { error } = await supabase.from('MONZ').update({ instruction_status: nextStatus, instruction_checked_at: new Date().toISOString() }).eq('id', taskId)
-    if (error) { alert(`상태 변경 실패: ${error.message}`); return; }
+    const { error } = await supabase
+      .from('MONZ')
+      .update({
+        instruction_status: nextStatus,
+        instruction_checked_at: new Date().toISOString(),
+      })
+      .eq('id', taskId)
+
+    if (error) {
+      alert(`상태 변경 실패: ${error.message}`)
+      return
+    }
+
     await fetchTasks()
   }
 
@@ -397,23 +467,41 @@ export default function Home() {
 
   const filteredTasks = tasks.filter((task) => {
     if (ownerTab !== '전체') {
-      if (ownerTab === '연차/월차') { if (!(task.type === '연차' || task.type === '월차')) return false }
-      else if (task.type !== ownerTab) return false
+      if (ownerTab === '연차/월차') {
+        if (!(task.type === '연차' || task.type === '월차')) return false
+      } else if (task.type !== ownerTab) {
+        return false
+      }
     }
+
     if (!dateFilterEnabled) return true
+
     const taskDate = getTaskKSTDate(task)
     if (!taskDate) return false
+
     return taskDate >= fromDate && taskDate <= toDate
   })
 
-  const leaveTasks = tasks.filter(task => (task.type === '연차' || task.type === '월차') && !!task.leave_date && task.leave_date.slice(0, 7) === calendarMonth)
+  const leaveTasks = tasks.filter(
+    (task) =>
+      (task.type === '연차' || task.type === '월차') &&
+      !!task.leave_date &&
+      task.leave_date.slice(0, 7) === calendarMonth
+  )
+
   const leaveTaskMap = leaveTasks.reduce<Record<string, TaskRow[]>>((acc, task) => {
-    const key = task.leave_date!; if (!acc[key]) acc[key] = []; acc[key].push(task); return acc
+    const key = task.leave_date!
+    if (!acc[key]) acc[key] = []
+    acc[key].push(task)
+    return acc
   }, {})
 
   const [year, month] = calendarMonth.split('-').map(Number)
-  const firstDay = new Date(year, month - 1, 1), lastDay = new Date(year, month, 0)
-  const firstWeekday = firstDay.getDay(), daysInMonth = lastDay.getDate()
+  const firstDay = new Date(year, month - 1, 1)
+  const lastDay = new Date(year, month, 0)
+  const firstWeekday = firstDay.getDay()
+  const daysInMonth = lastDay.getDate()
+
   const calendarCells: (string | null)[] = []
   for (let i = 0; i < firstWeekday; i++) calendarCells.push(null)
   for (let d = 1; d <= daysInMonth; d++) calendarCells.push(`${calendarMonth}-${String(d).padStart(2, '0')}`)
@@ -421,8 +509,18 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-slate-50 py-10 px-4 font-sans text-slate-900">
       <div className="max-w-5xl mx-auto flex justify-between mb-4">
-        <button onClick={() => (isOwnerView ? setShowOrderModal(true) : alert('사장님 PIN 인증부터 해주세요!'))} className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm">📢 업무지시</button>
-        <button onClick={() => setShowLeaveModal(true)} className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm">📅 연차/월차</button>
+        <button
+          onClick={() => (isOwnerView ? setShowOrderModal(true) : alert('사장님 PIN 인증부터 해주세요!'))}
+          className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+        >
+          📢 업무지시
+        </button>
+        <button
+          onClick={() => setShowLeaveModal(true)}
+          className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+        >
+          📅 연차/월차
+        </button>
       </div>
 
       <header className="max-w-5xl mx-auto mb-6 bg-teal-700 rounded-[2rem] p-8 text-white text-center shadow-lg">
@@ -436,20 +534,31 @@ export default function Home() {
             <div className="text-center text-2xl font-black text-amber-600 mb-4">📢 업무지시 확인하기</div>
             <div className="space-y-4">
               {myInstructions.map((task) => (
-                <div key={task.id} className="bg-white border-2 border-black rounded-2xl p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                <div
+                  key={task.id}
+                  className="bg-white border-2 border-black rounded-2xl p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+                >
                   <div className="flex flex-wrap justify-between gap-3 mb-3">
                     <div className="font-black">대상: {task.target_name || '전체'}</div>
                     <div className="text-sm font-black text-slate-500">{formatKSTDateTime(task.created_at)}</div>
                   </div>
                   <div className="font-bold whitespace-pre-wrap mb-4">{task.task_content}</div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`px-3 py-1 rounded-full text-xs font-black border border-black ${statusColor(task.instruction_status)}`}>상태: {task.instruction_status || '대기'}</span>
+                    <span className={`px-3 py-1 rounded-full text-xs font-black border border-black ${statusColor(task.instruction_status)}`}>
+                      상태: {task.instruction_status || '대기'}
+                    </span>
                     <span className={`px-3 py-1 rounded-full text-xs font-black border border-black ${resultColor(task.instruction_result_mark)}`}>
                       평가: {resultLabel(task.instruction_result_mark)} {task.instruction_result_mark ? `(${resultText(task.instruction_result_mark)})` : ''}
                     </span>
-                    <button type="button" onClick={() => updateInstructionStatus(task.id, '확인')} className="px-3 py-2 rounded-lg border-2 border-black bg-sky-100 font-black text-sm">확인</button>
-                    <button type="button" onClick={() => updateInstructionStatus(task.id, '진행중')} className="px-3 py-2 rounded-lg border-2 border-black bg-amber-100 font-black text-sm">진행중</button>
-                    <button type="button" onClick={() => updateInstructionStatus(task.id, '완료')} className="px-3 py-2 rounded-lg border-2 border-black bg-emerald-100 font-black text-sm">완료</button>
+                    <button type="button" onClick={() => updateInstructionStatus(task.id, '확인')} className="px-3 py-2 rounded-lg border-2 border-black bg-sky-100 font-black text-sm">
+                      확인
+                    </button>
+                    <button type="button" onClick={() => updateInstructionStatus(task.id, '진행중')} className="px-3 py-2 rounded-lg border-2 border-black bg-amber-100 font-black text-sm">
+                      진행중
+                    </button>
+                    <button type="button" onClick={() => updateInstructionStatus(task.id, '완료')} className="px-3 py-2 rounded-lg border-2 border-black bg-emerald-100 font-black text-sm">
+                      완료
+                    </button>
                   </div>
                 </div>
               ))}
@@ -459,20 +568,47 @@ export default function Home() {
       )}
 
       <div className="max-w-5xl mx-auto mb-6">
-        <input className="w-full p-3 border-2 border-black rounded-xl font-bold bg-white text-black" placeholder="성함" value={writerName} onChange={(e) => setWriterName(e.target.value)} />
+        <input
+          className="w-full p-3 border-2 border-black rounded-xl font-bold bg-white text-black"
+          placeholder="성함"
+          value={writerName}
+          onChange={(e) => setWriterName(e.target.value)}
+        />
       </div>
 
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="bg-white p-6 rounded-2xl border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
           <h2 className="text-xl font-black mb-3">📝 일일업무보고</h2>
-          <textarea className="w-full h-40 p-4 border-2 border-black rounded-xl font-bold bg-white text-black" placeholder="업무 내용을 입력하세요..." value={dailyContent} onChange={(e) => setDailyContent(e.target.value)} />
-          <button onClick={handleDailySubmit} disabled={loading} className="w-full mt-4 bg-black text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60">{loading ? '등록 중...' : '오늘 보고 등록'}</button>
+          <textarea
+            className="w-full h-40 p-4 border-2 border-black rounded-xl font-bold bg-white text-black"
+            placeholder="업무 내용을 입력하세요..."
+            value={dailyContent}
+            onChange={(e) => setDailyContent(e.target.value)}
+          />
+          <button
+            onClick={handleDailySubmit}
+            disabled={loading}
+            className="w-full mt-4 bg-black text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60"
+          >
+            {loading ? '등록 중...' : '오늘 보고 등록'}
+          </button>
         </div>
 
         <div className="bg-white p-6 rounded-2xl border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
           <h2 className="text-xl font-black mb-3 text-indigo-700">📅 주간계획업무</h2>
-          <textarea className="w-full h-32 p-4 border-2 border-black rounded-xl font-bold bg-white text-black" placeholder="이번 주 계획 업무를 입력하세요..." value={weeklyContent} onChange={(e) => setWeeklyContent(e.target.value)} />
-          <button onClick={handleWeeklySubmit} disabled={loading} className="w-full mt-4 bg-indigo-700 text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60">{loading ? '등록 중...' : '주간계획 등록'}</button>
+          <textarea
+            className="w-full h-32 p-4 border-2 border-black rounded-xl font-bold bg-white text-black"
+            placeholder="이번 주 계획 업무를 입력하세요..."
+            value={weeklyContent}
+            onChange={(e) => setWeeklyContent(e.target.value)}
+          />
+          <button
+            onClick={handleWeeklySubmit}
+            disabled={loading}
+            className="w-full mt-4 bg-indigo-700 text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60"
+          >
+            {loading ? '등록 중...' : '주간계획 등록'}
+          </button>
         </div>
 
         <div className="pt-10 border-t-4 border-dashed border-slate-300">
@@ -481,11 +617,24 @@ export default function Home() {
               <h2 className="text-2xl font-black text-teal-800">📋 사장님 전용</h2>
               {!isOwnerView ? (
                 <div className="flex gap-2 bg-slate-800 p-2 rounded-xl">
-                  <input type="password" placeholder="PIN" className="w-20 bg-transparent text-white text-center font-bold outline-none" value={pin} onChange={(e) => setPin(e.target.value)} />
-                  <button onClick={() => (pin === OWNER_PIN ? setIsOwnerView(true) : alert('PIN이 틀렸습니다.'))} className="bg-amber-400 px-3 py-1 rounded-lg font-black text-xs">확인</button>
+                  <input
+                    type="password"
+                    placeholder="PIN"
+                    className="w-20 bg-transparent text-white text-center font-bold outline-none"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value)}
+                  />
+                  <button
+                    onClick={() => (pin === OWNER_PIN ? setIsOwnerView(true) : alert('PIN이 틀렸습니다.'))}
+                    className="bg-amber-400 px-3 py-1 rounded-lg font-black text-xs"
+                  >
+                    확인
+                  </button>
                 </div>
               ) : (
-                <button onClick={() => setIsOwnerView(false)} className="text-xs font-bold text-rose-500 underline">인증 해제</button>
+                <button onClick={() => setIsOwnerView(false)} className="text-xs font-bold text-rose-500 underline">
+                  인증 해제
+                </button>
               )}
             </div>
 
@@ -493,18 +642,38 @@ export default function Home() {
               <>
                 <div className="flex flex-wrap gap-2">
                   {(['전체', '일일업무', '주간계획', '연차/월차', '업무지시'] as const).map((tab) => (
-                    <button key={tab} onClick={() => setOwnerTab(tab)} className={`px-4 py-2 rounded-xl border-2 border-black font-bold ${ownerTab === tab ? 'bg-teal-700 text-white' : 'bg-white'}`}>{tab}</button>
+                    <button
+                      key={tab}
+                      onClick={() => setOwnerTab(tab)}
+                      className={`px-4 py-2 rounded-xl border-2 border-black font-bold ${ownerTab === tab ? 'bg-teal-700 text-white' : 'bg-white'}`}
+                    >
+                      {tab}
+                    </button>
                   ))}
                 </div>
 
                 <div className="bg-white rounded-2xl border-2 border-black p-4">
                   <div className="flex flex-wrap items-center gap-3 mb-3">
-                    <label className="flex items-center gap-2 font-bold"><input type="checkbox" checked={dateFilterEnabled} onChange={(e) => setDateFilterEnabled(e.target.checked)} />날짜 필터 사용</label>
+                    <label className="flex items-center gap-2 font-bold">
+                      <input type="checkbox" checked={dateFilterEnabled} onChange={(e) => setDateFilterEnabled(e.target.checked)} />
+                      날짜 필터 사용
+                    </label>
                     <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="border-2 border-black rounded-lg px-3 py-2 font-bold" />
                     <span className="font-bold">~</span>
                     <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="border-2 border-black rounded-lg px-3 py-2 font-bold" />
-                    <button onClick={() => { setFromDate(today); setToDate(today); setDateFilterEnabled(true); }} className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold">오늘로</button>
-                    <button onClick={() => setDateFilterEnabled(false)} className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold">전체보기</button>
+                    <button
+                      onClick={() => {
+                        setFromDate(today)
+                        setToDate(today)
+                        setDateFilterEnabled(true)
+                      }}
+                      className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold"
+                    >
+                      오늘로
+                    </button>
+                    <button onClick={() => setDateFilterEnabled(false)} className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold">
+                      전체보기
+                    </button>
                   </div>
                 </div>
 
@@ -512,29 +681,66 @@ export default function Home() {
                   <div className="bg-white rounded-2xl border-2 border-black p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                       <h3 className="text-xl font-black text-teal-700">📊 업무평가 통계</h3>
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-black text-slate-500">기준월</span>
-                        <input
-                          type="month"
-                          value={evaluationMonth}
-                          onChange={(e) => setEvaluationMonth(e.target.value)}
-                          className="border-2 border-black rounded-lg px-3 py-2 font-bold"
-                        />
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setEvaluationMode('month')}
+                          className={`px-4 py-2 rounded-xl border-2 border-black font-black ${
+                            evaluationMode === 'month' ? 'bg-teal-700 text-white' : 'bg-white text-black'
+                          }`}
+                        >
+                          월별
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setEvaluationMode('year')}
+                          className={`px-4 py-2 rounded-xl border-2 border-black font-black ${
+                            evaluationMode === 'year' ? 'bg-teal-700 text-white' : 'bg-white text-black'
+                          }`}
+                        >
+                          연도별
+                        </button>
+
+                        {evaluationMode === 'month' ? (
+                          <>
+                            <span className="text-sm font-black text-slate-500 ml-2">기준월</span>
+                            <input
+                              type="month"
+                              value={evaluationMonth}
+                              onChange={(e) => setEvaluationMonth(e.target.value)}
+                              className="border-2 border-black rounded-lg px-3 py-2 font-bold"
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-sm font-black text-slate-500 ml-2">기준연도</span>
+                            <input
+                              type="number"
+                              min="2000"
+                              max="2100"
+                              value={evaluationYear}
+                              onChange={(e) => setEvaluationYear(e.target.value)}
+                              className="w-28 border-2 border-black rounded-lg px-3 py-2 font-bold"
+                            />
+                          </>
+                        )}
                       </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
                       <div className="rounded-2xl border-2 border-black bg-emerald-50 p-4">
                         <div className="text-sm font-black text-slate-500">○ 완료 인정</div>
-                        <div className="text-3xl font-black text-emerald-600 mt-1">{monthlyEvaluationStats.total.circle}건</div>
+                        <div className="text-3xl font-black text-emerald-600 mt-1">{evaluationStats.total.circle}건</div>
                       </div>
                       <div className="rounded-2xl border-2 border-black bg-amber-50 p-4">
                         <div className="text-sm font-black text-slate-500">△ 보완 필요</div>
-                        <div className="text-3xl font-black text-amber-500 mt-1">{monthlyEvaluationStats.total.triangle}건</div>
+                        <div className="text-3xl font-black text-amber-500 mt-1">{evaluationStats.total.triangle}건</div>
                       </div>
                       <div className="rounded-2xl border-2 border-black bg-rose-50 p-4">
                         <div className="text-sm font-black text-slate-500">✕ 미흡</div>
-                        <div className="text-3xl font-black text-rose-500 mt-1">{monthlyEvaluationStats.total.x}건</div>
+                        <div className="text-3xl font-black text-rose-500 mt-1">{evaluationStats.total.x}건</div>
                       </div>
                     </div>
 
@@ -547,12 +753,12 @@ export default function Home() {
                         <div className="p-3">총 평가</div>
                       </div>
 
-                      {monthlyEvaluationStats.employeeRows.length === 0 ? (
+                      {evaluationStats.employeeRows.length === 0 ? (
                         <div className="p-5 text-center font-bold text-slate-400">
-                          이 달에 평가된 업무지시가 없습니다.
+                          {evaluationMode === 'month' ? '이 달에 평가된 업무지시가 없습니다.' : '이 연도에 평가된 업무지시가 없습니다.'}
                         </div>
                       ) : (
-                        monthlyEvaluationStats.employeeRows.map((row) => (
+                        evaluationStats.employeeRows.map((row) => (
                           <div key={row.name} className="grid grid-cols-5 text-center border-t-2 border-black font-bold bg-white">
                             <div className="p-3 text-left font-black">{row.name}</div>
                             <div className="p-3 text-emerald-600 font-black">{row.circle}</div>
@@ -570,18 +776,42 @@ export default function Home() {
                   <div className="bg-white rounded-2xl border-2 border-black p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                       <h3 className="text-xl font-black text-rose-500">📅 연차/월차 달력</h3>
-                      <input type="month" value={calendarMonth} onChange={(e) => { setCalendarMonth(e.target.value); setSelectedCalendarDate(`${e.target.value}-01`); }} className="border-2 border-black rounded-lg px-3 py-2 font-bold" />
+                      <input
+                        type="month"
+                        value={calendarMonth}
+                        onChange={(e) => {
+                          setCalendarMonth(e.target.value)
+                          setSelectedCalendarDate(`${e.target.value}-01`)
+                        }}
+                        className="border-2 border-black rounded-lg px-3 py-2 font-bold"
+                      />
                     </div>
                     <div className="grid grid-cols-7 gap-2 mb-4 text-center font-black">
-                      {['일', '월', '화', '수', '목', '금', '토'].map((day) => <div key={day} className="py-2">{day}</div>)}
+                      {['일', '월', '화', '수', '목', '금', '토'].map((day) => (
+                        <div key={day} className="py-2">
+                          {day}
+                        </div>
+                      ))}
                     </div>
                     <div className="grid grid-cols-7 gap-2">
                       {calendarCells.map((date, idx) => {
                         const count = date ? leaveTaskMap[date]?.length || 0 : 0
                         const selected = date === selectedCalendarDate
                         return (
-                          <button key={`${date}-${idx}`} disabled={!date} onClick={() => date && setSelectedCalendarDate(date)} className={`min-h-[74px] rounded-xl border-2 p-2 text-left ${!date ? 'border-transparent bg-transparent' : selected ? 'border-rose-500 bg-rose-50' : 'border-black bg-white'}`}>
-                            {date && (<><div className="font-black">{Number(date.slice(-2))}</div>{count > 0 && <div className="mt-2 inline-block rounded-full bg-rose-500 text-white text-xs px-2 py-1 font-black">{count}건</div>}</>)}
+                          <button
+                            key={`${date}-${idx}`}
+                            disabled={!date}
+                            onClick={() => date && setSelectedCalendarDate(date)}
+                            className={`min-h-[74px] rounded-xl border-2 p-2 text-left ${
+                              !date ? 'border-transparent bg-transparent' : selected ? 'border-rose-500 bg-rose-50' : 'border-black bg-white'
+                            }`}
+                          >
+                            {date && (
+                              <>
+                                <div className="font-black">{Number(date.slice(-2))}</div>
+                                {count > 0 && <div className="mt-2 inline-block rounded-full bg-rose-500 text-white text-xs px-2 py-1 font-black">{count}건</div>}
+                              </>
+                            )}
                           </button>
                         )
                       })}
@@ -589,12 +819,21 @@ export default function Home() {
                     <div className="mt-5 rounded-2xl border-2 border-black p-4 bg-slate-50">
                       <div className="font-black mb-3">선택 날짜: {formatKSTDateOnly(selectedCalendarDate)}</div>
                       <div className="space-y-3">
-                        {(leaveTaskMap[selectedCalendarDate] || []).length === 0 ? <div className="font-bold text-slate-400">이 날짜의 연차/월차 신청이 없습니다.</div> : (leaveTaskMap[selectedCalendarDate] || []).map((task) => (
-                          <div key={task.id} className="rounded-xl border-2 border-black bg-white p-3 flex justify-between gap-4">
-                            <div><div className="font-black">[{task.type}] {task.user_name}</div><div className="font-bold mt-1 whitespace-pre-wrap">{task.task_content}</div></div>
-                            <div className="font-black text-sm whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
-                          </div>
-                        ))}
+                        {(leaveTaskMap[selectedCalendarDate] || []).length === 0 ? (
+                          <div className="font-bold text-slate-400">이 날짜의 연차/월차 신청이 없습니다.</div>
+                        ) : (
+                          (leaveTaskMap[selectedCalendarDate] || []).map((task) => (
+                            <div key={task.id} className="rounded-xl border-2 border-black bg-white p-3 flex justify-between gap-4">
+                              <div>
+                                <div className="font-black">
+                                  [{task.type}] {task.user_name}
+                                </div>
+                                <div className="font-bold mt-1 whitespace-pre-wrap">{task.task_content}</div>
+                              </div>
+                              <div className="font-black text-sm whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
+                            </div>
+                          ))
+                        )}
                       </div>
                     </div>
                   </div>
@@ -605,64 +844,81 @@ export default function Home() {
 
           {isOwnerView ? (
             <div className="space-y-4 px-2">
-              {filteredTasks.length === 0 ? <div className="bg-white p-10 rounded-2xl border-2 border-black text-center font-bold text-slate-400">등록된 항목이 없습니다.</div> : filteredTasks.map((task) => (
-                <div key={task.id} className="p-5 rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-black">
-                  <div className="flex justify-between mb-2 gap-4">
-                    <div className="flex gap-2 items-center flex-wrap">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-black border border-black ${task.type === '업무지시' ? 'bg-amber-400' : task.type === '연차' || task.type === '월차' ? 'bg-rose-200' : task.type === '주간계획' ? 'bg-indigo-200' : 'bg-slate-100'}`}>{task.type}</span>
-                      {task.type === '업무지시' && (
-                        <>
-                          <span className="text-xs font-black text-slate-500">대상: {task.target_name}</span>
-                          <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>상태: {task.instruction_status || '대기'}</span>
-                          <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${resultColor(task.instruction_result_mark)}`}>
-                            평가: {resultLabel(task.instruction_result_mark)}
-                          </span>
-                        </>
-                      )}
-                      {(task.type === '연차' || task.type === '월차') && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
-                    </div>
-                    <span className="font-black text-sm text-right whitespace-nowrap">{task.user_name} | {formatKSTDateTime(task.created_at)}</span>
-                  </div>
-                  <p className="font-bold whitespace-pre-wrap">{task.task_content}</p>
-
-                  {task.type === '업무지시' && (
-                    <div className="mt-4 rounded-2xl border-2 border-black bg-slate-50 p-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-black text-sm mr-2">업무결과 평가</span>
-                        <button
-                          type="button"
-                          onClick={() => updateInstructionResult(task.id, 'CIRCLE')}
-                          className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'CIRCLE' ? 'bg-emerald-500 text-white' : 'bg-white'}`}
+              {filteredTasks.length === 0 ? (
+                <div className="bg-white p-10 rounded-2xl border-2 border-black text-center font-bold text-slate-400">등록된 항목이 없습니다.</div>
+              ) : (
+                filteredTasks.map((task) => (
+                  <div key={task.id} className="p-5 rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] text-black">
+                    <div className="flex justify-between mb-2 gap-4">
+                      <div className="flex gap-2 items-center flex-wrap">
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-black border border-black ${
+                            task.type === '업무지시'
+                              ? 'bg-amber-400'
+                              : task.type === '연차' || task.type === '월차'
+                                ? 'bg-rose-200'
+                                : task.type === '주간계획'
+                                  ? 'bg-indigo-200'
+                                  : 'bg-slate-100'
+                          }`}
                         >
-                          ○
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => updateInstructionResult(task.id, 'TRIANGLE')}
-                          className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'TRIANGLE' ? 'bg-amber-400 text-black' : 'bg-white'}`}
-                        >
-                          △
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => updateInstructionResult(task.id, 'X')}
-                          className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'X' ? 'bg-rose-500 text-white' : 'bg-white'}`}
-                        >
-                          ✕
-                        </button>
-                        <span className="ml-2 text-sm font-black text-slate-600">
-                          현재: {resultLabel(task.instruction_result_mark)} {task.instruction_result_mark ? `(${resultText(task.instruction_result_mark)})` : ''}
+                          {task.type}
                         </span>
+                        {task.type === '업무지시' && (
+                          <>
+                            <span className="text-xs font-black text-slate-500">대상: {task.target_name}</span>
+                            <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>
+                              상태: {task.instruction_status || '대기'}
+                            </span>
+                            <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${resultColor(task.instruction_result_mark)}`}>
+                              평가: {resultLabel(task.instruction_result_mark)}
+                            </span>
+                          </>
+                        )}
+                        {(task.type === '연차' || task.type === '월차') && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
                       </div>
-                      {task.instruction_result_at && (
-                        <div className="mt-2 text-xs font-bold text-slate-500">
-                          평가일시: {formatKSTDateTime(task.instruction_result_at)}
-                        </div>
-                      )}
+                      <span className="font-black text-sm text-right whitespace-nowrap">
+                        {task.user_name} | {formatKSTDateTime(task.created_at)}
+                      </span>
                     </div>
-                  )}
-                </div>
-              ))}
+
+                    <p className="font-bold whitespace-pre-wrap">{task.task_content}</p>
+
+                    {task.type === '업무지시' && (
+                      <div className="mt-4 rounded-2xl border-2 border-black bg-slate-50 p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-black text-sm mr-2">업무결과 평가</span>
+                          <button
+                            type="button"
+                            onClick={() => updateInstructionResult(task.id, 'CIRCLE')}
+                            className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'CIRCLE' ? 'bg-emerald-500 text-white' : 'bg-white'}`}
+                          >
+                            ○
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateInstructionResult(task.id, 'TRIANGLE')}
+                            className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'TRIANGLE' ? 'bg-amber-400 text-black' : 'bg-white'}`}
+                          >
+                            △
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => updateInstructionResult(task.id, 'X')}
+                            className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'X' ? 'bg-rose-500 text-white' : 'bg-white'}`}
+                          >
+                            ✕
+                          </button>
+                          <span className="ml-2 text-sm font-black text-slate-600">
+                            현재: {resultLabel(task.instruction_result_mark)} {task.instruction_result_mark ? `(${resultText(task.instruction_result_mark)})` : ''}
+                          </span>
+                        </div>
+                        {task.instruction_result_at && <div className="mt-2 text-xs font-bold text-slate-500">평가일시: {formatKSTDateTime(task.instruction_result_at)}</div>}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
             </div>
           ) : (
             <div className="bg-white p-10 rounded-2xl border-2 border-black text-center font-bold text-slate-400 mx-2">관리자 인증 후 실시간으로 확인 가능합니다.</div>
@@ -674,9 +930,26 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
           <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-md">
             <h2 className="text-xl font-black mb-4">📢 업무 지시</h2>
-            <input className="w-full mb-2 p-3 border-2 border-black rounded-lg" placeholder="직원명" value={orderData.to} onChange={(e) => setOrderData({ ...orderData, to: e.target.value })} />
-            <textarea className="w-full h-28 p-3 border-2 border-black rounded-lg mb-4" placeholder="내용" value={orderData.content} onChange={(e) => setOrderData({ ...orderData, content: e.target.value })} />
-            <div className="flex gap-2"><button onClick={handleOrderSubmit} className="flex-1 bg-teal-600 text-white py-3 rounded-lg">전송</button><button onClick={() => setShowOrderModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">닫기</button></div>
+            <input
+              className="w-full mb-2 p-3 border-2 border-black rounded-lg"
+              placeholder="직원명"
+              value={orderData.to}
+              onChange={(e) => setOrderData({ ...orderData, to: e.target.value })}
+            />
+            <textarea
+              className="w-full h-28 p-3 border-2 border-black rounded-lg mb-4"
+              placeholder="내용"
+              value={orderData.content}
+              onChange={(e) => setOrderData({ ...orderData, content: e.target.value })}
+            />
+            <div className="flex gap-2">
+              <button onClick={handleOrderSubmit} className="flex-1 bg-teal-600 text-white py-3 rounded-lg">
+                전송
+              </button>
+              <button onClick={() => setShowOrderModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">
+                닫기
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -685,10 +958,34 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
           <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-sm">
             <h2 className="text-xl font-black mb-4">📅 연차/월차 신청</h2>
-            <select className="w-full mb-2 p-3 border-2 border-black rounded-lg" value={leaveData.type} onChange={(e) => setLeaveData({ ...leaveData, type: e.target.value })}><option value="연차">연차</option><option value="월차">월차</option></select>
-            <input type="date" className="w-full mb-2 p-3 border-2 border-black rounded-lg" value={leaveData.date} onChange={(e) => setLeaveData({ ...leaveData, date: e.target.value })} />
-            <textarea className="w-full h-24 p-3 border-2 border-black rounded-lg mb-4" placeholder="사유" value={leaveData.content} onChange={(e) => setLeaveData({ ...leaveData, content: e.target.value })} />
-            <div className="flex gap-2"><button onClick={handleLeaveSubmit} className="flex-1 bg-rose-500 text-white py-3 rounded-lg">등록</button><button onClick={() => setShowLeaveModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">취소</button></div>
+            <select
+              className="w-full mb-2 p-3 border-2 border-black rounded-lg"
+              value={leaveData.type}
+              onChange={(e) => setLeaveData({ ...leaveData, type: e.target.value })}
+            >
+              <option value="연차">연차</option>
+              <option value="월차">월차</option>
+            </select>
+            <input
+              type="date"
+              className="w-full mb-2 p-3 border-2 border-black rounded-lg"
+              value={leaveData.date}
+              onChange={(e) => setLeaveData({ ...leaveData, date: e.target.value })}
+            />
+            <textarea
+              className="w-full h-24 p-3 border-2 border-black rounded-lg mb-4"
+              placeholder="사유"
+              value={leaveData.content}
+              onChange={(e) => setLeaveData({ ...leaveData, content: e.target.value })}
+            />
+            <div className="flex gap-2">
+              <button onClick={handleLeaveSubmit} className="flex-1 bg-rose-500 text-white py-3 rounded-lg">
+                등록
+              </button>
+              <button onClick={() => setShowLeaveModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">
+                취소
+              </button>
+            </div>
           </div>
         </div>
       )}
