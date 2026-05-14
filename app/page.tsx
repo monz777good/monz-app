@@ -24,11 +24,26 @@ type TaskRow = {
   instruction_result_at?: string | null
 }
 
+type EvaluationCount = {
+  circle: number
+  triangle: number
+  x: number
+  total: number
+}
+
 const OWNER_PIN = '1919'
 
 function getKSTDateString(date = new Date()) {
   const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000)
   return kst.toISOString().slice(0, 10)
+}
+
+function getKSTMonthString(value?: string | null) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+  return kst.toISOString().slice(0, 7)
 }
 
 function formatKSTDateTime(value?: string | null) {
@@ -110,6 +125,22 @@ function matchesTarget(targetName: string | null | undefined, writerName: string
   return list.includes('전체') || list.includes(me)
 }
 
+function emptyEvaluationCount(): EvaluationCount {
+  return {
+    circle: 0,
+    triangle: 0,
+    x: 0,
+    total: 0,
+  }
+}
+
+function addResultCount(count: EvaluationCount, mark?: string | null) {
+  if (mark === 'CIRCLE') count.circle += 1
+  if (mark === 'TRIANGLE') count.triangle += 1
+  if (mark === 'X') count.x += 1
+  if (mark === 'CIRCLE' || mark === 'TRIANGLE' || mark === 'X') count.total += 1
+}
+
 export default function Home() {
   const today = useMemo(() => getKSTDateString(), [])
 
@@ -145,6 +176,8 @@ export default function Home() {
 
   const [calendarMonth, setCalendarMonth] = useState(today.slice(0, 7))
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(today)
+
+  const [evaluationMonth, setEvaluationMonth] = useState(today.slice(0, 7))
 
   const fetchTasks = useCallback(async () => {
     const { data, error } = await supabase
@@ -199,6 +232,41 @@ export default function Home() {
 
     return () => clearInterval(timer)
   }, [fetchTasks])
+
+  const monthlyEvaluationStats = useMemo(() => {
+    const total = emptyEvaluationCount()
+    const byEmployee: Record<string, EvaluationCount> = {}
+
+    tasks.forEach((task) => {
+      if (task.type !== '업무지시') return
+      if (!task.instruction_result_mark) return
+
+      const evaluatedMonth = getKSTMonthString(task.instruction_result_at || task.created_at)
+      if (evaluatedMonth !== evaluationMonth) return
+
+      addResultCount(total, task.instruction_result_mark)
+
+      const targetNames = normalizeNameList(task.target_name)
+      const names = targetNames.length > 0 ? targetNames : ['미지정']
+
+      names.forEach((name) => {
+        if (!byEmployee[name]) byEmployee[name] = emptyEvaluationCount()
+        addResultCount(byEmployee[name], task.instruction_result_mark)
+      })
+    })
+
+    const employeeRows = Object.entries(byEmployee)
+      .map(([name, count]) => ({
+        name,
+        ...count,
+      }))
+      .sort((a, b) => b.total - a.total || b.circle - a.circle || a.name.localeCompare(b.name, 'ko'))
+
+    return {
+      total,
+      employeeRows,
+    }
+  }, [tasks, evaluationMonth])
 
   const handleDailySubmit = async () => {
     if (!writerName.trim()) {
@@ -439,6 +507,64 @@ export default function Home() {
                     <button onClick={() => setDateFilterEnabled(false)} className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold">전체보기</button>
                   </div>
                 </div>
+
+                {ownerTab === '업무지시' && (
+                  <div className="bg-white rounded-2xl border-2 border-black p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                      <h3 className="text-xl font-black text-teal-700">📊 업무평가 통계</h3>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-black text-slate-500">기준월</span>
+                        <input
+                          type="month"
+                          value={evaluationMonth}
+                          onChange={(e) => setEvaluationMonth(e.target.value)}
+                          className="border-2 border-black rounded-lg px-3 py-2 font-bold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                      <div className="rounded-2xl border-2 border-black bg-emerald-50 p-4">
+                        <div className="text-sm font-black text-slate-500">○ 완료 인정</div>
+                        <div className="text-3xl font-black text-emerald-600 mt-1">{monthlyEvaluationStats.total.circle}건</div>
+                      </div>
+                      <div className="rounded-2xl border-2 border-black bg-amber-50 p-4">
+                        <div className="text-sm font-black text-slate-500">△ 보완 필요</div>
+                        <div className="text-3xl font-black text-amber-500 mt-1">{monthlyEvaluationStats.total.triangle}건</div>
+                      </div>
+                      <div className="rounded-2xl border-2 border-black bg-rose-50 p-4">
+                        <div className="text-sm font-black text-slate-500">✕ 미흡</div>
+                        <div className="text-3xl font-black text-rose-500 mt-1">{monthlyEvaluationStats.total.x}건</div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border-2 border-black overflow-hidden">
+                      <div className="grid grid-cols-5 bg-slate-900 text-white text-center font-black text-sm">
+                        <div className="p-3 text-left">직원명</div>
+                        <div className="p-3">○</div>
+                        <div className="p-3">△</div>
+                        <div className="p-3">✕</div>
+                        <div className="p-3">총 평가</div>
+                      </div>
+
+                      {monthlyEvaluationStats.employeeRows.length === 0 ? (
+                        <div className="p-5 text-center font-bold text-slate-400">
+                          이 달에 평가된 업무지시가 없습니다.
+                        </div>
+                      ) : (
+                        monthlyEvaluationStats.employeeRows.map((row) => (
+                          <div key={row.name} className="grid grid-cols-5 text-center border-t-2 border-black font-bold bg-white">
+                            <div className="p-3 text-left font-black">{row.name}</div>
+                            <div className="p-3 text-emerald-600 font-black">{row.circle}</div>
+                            <div className="p-3 text-amber-500 font-black">{row.triangle}</div>
+                            <div className="p-3 text-rose-500 font-black">{row.x}</div>
+                            <div className="p-3 font-black">{row.total}</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {(ownerTab === '전체' || ownerTab === '연차/월차') && (
                   <div className="bg-white rounded-2xl border-2 border-black p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
