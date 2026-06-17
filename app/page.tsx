@@ -35,6 +35,8 @@ const OWNER_PIN = '1919'
 const DEFAULT_ANNUAL_LEAVE_LIMIT = 15
 const ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE: Record<string, number> = {
   이현택: 16,
+  전창식: 11,
+  조승: 0,
 }
 const LEAVE_TYPES = ['연차', '월차', '반차']
 
@@ -43,7 +45,8 @@ function isLeaveType(type: string) {
 }
 
 function getAnnualLeaveLimit(name: string) {
-  if (name.includes('이현택')) return 16
+  const overrideName = Object.keys(ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE).find((employeeName) => name.includes(employeeName))
+  if (overrideName) return ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE[overrideName]
 
   return ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE[name] ?? DEFAULT_ANNUAL_LEAVE_LIMIT
 }
@@ -55,6 +58,8 @@ function normalizeEmployeeName(raw?: string | null) {
     .trim()
 
   if (name.includes('이현택')) return '이현택'
+  if (name.includes('전창식')) return '전창식'
+  if (name.includes('조승')) return '조승'
   return name
 }
 
@@ -864,7 +869,7 @@ export default function Home() {
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-rose-50 p-3">
                         <h4 className="font-black">직원별 연차 현황</h4>
                         <span className="text-xs font-black text-slate-500">
-                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회
+                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회 · 전창식 11회 · 조승 0회
                         </span>
                       </div>
 
