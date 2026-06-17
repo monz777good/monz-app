@@ -227,6 +227,7 @@ export default function Home() {
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
   const [fromDate, setFromDate] = useState(today)
   const [toDate, setToDate] = useState(today)
+  const [employeeHistoryDate, setEmployeeHistoryDate] = useState(today)
 
   const [calendarMonth, setCalendarMonth] = useState(today.slice(0, 7))
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(today)
@@ -532,6 +533,10 @@ export default function Home() {
   }
 
   const updateInstructionStatus = async (taskId: number, nextStatus: '확인' | '진행중' | '완료') => {
+    if (nextStatus === '완료' && !window.confirm('정말 완료 하셨습니까?')) {
+      return
+    }
+
     const { error } = await supabase
       .from('MONZ')
       .update({
@@ -572,8 +577,31 @@ export default function Home() {
 
   const myInstructions = tasks.filter((task) => {
     if (task.type !== '업무지시') return false
+    if (task.instruction_status === '완료') return false
     return matchesTarget(task.target_name, writerName)
   })
+
+  const myHistoryTasks = useMemo(() => {
+    const myName = normalizeEmployeeName(writerName)
+    if (!myName) return []
+
+    return tasks
+      .filter((task) => {
+        const taskDate = getTaskKSTDate(task)
+        if (taskDate !== employeeHistoryDate) return false
+
+        if (task.type === '업무지시') {
+          return matchesTarget(task.target_name, writerName)
+        }
+
+        return normalizeEmployeeName(task.user_name) === myName
+      })
+      .sort((a, b) => {
+        const aTime = new Date(a.created_at || '').getTime()
+        const bTime = new Date(b.created_at || '').getTime()
+        return bTime - aTime
+      })
+  }, [tasks, writerName, employeeHistoryDate])
 
   const filteredTasks = tasks.filter((task) => {
     if (ownerTab !== '전체') {
@@ -685,6 +713,54 @@ export default function Home() {
           onChange={(e) => setWriterName(e.target.value)}
         />
       </div>
+
+      {writerName.trim() && (
+        <div className="max-w-5xl mx-auto mb-6">
+          <div className="bg-white border-2 border-black rounded-2xl p-5 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className="text-xl font-black text-teal-800">📆 내 업무 기록</h2>
+              <input
+                type="date"
+                value={employeeHistoryDate}
+                onChange={(e) => setEmployeeHistoryDate(e.target.value)}
+                className="border-2 border-black rounded-lg px-3 py-2 font-bold"
+              />
+            </div>
+
+            <div className="space-y-3">
+              {myHistoryTasks.length === 0 ? (
+                <div className="rounded-xl border-2 border-dashed border-slate-300 p-4 text-center font-bold text-slate-400">
+                  선택한 날짜에 표시할 기록이 없습니다.
+                </div>
+              ) : (
+                myHistoryTasks.map((task) => (
+                  <div key={task.id} className="rounded-xl border-2 border-black bg-slate-50 p-4">
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-black bg-white px-3 py-1 text-xs font-black">{task.type}</span>
+                        {task.type === '업무지시' && (
+                          <>
+                            <span className={`rounded-full border border-black px-3 py-1 text-xs font-black ${statusColor(task.instruction_status)}`}>
+                              상태: {task.instruction_status || '대기'}
+                            </span>
+                            <span className={`rounded-full border border-black px-3 py-1 text-xs font-black ${resultColor(task.instruction_result_mark)}`}>
+                              평가: {resultLabel(task.instruction_result_mark)}
+                            </span>
+                          </>
+                        )}
+                        {isLeaveType(task.type) && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
+                      </div>
+                      <span className="text-sm font-black text-slate-500">{formatKSTDateTime(task.created_at)}</span>
+                    </div>
+                    {task.type === '업무지시' && <div className="mb-2 text-sm font-black text-slate-600">대상: {task.target_name || '전체'}</div>}
+                    <div className="whitespace-pre-wrap font-bold">{task.task_content}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-5xl mx-auto space-y-6">
         <div className="bg-white p-6 rounded-2xl border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
