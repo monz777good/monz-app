@@ -32,6 +32,16 @@ type EvaluationCount = {
 }
 
 const OWNER_PIN = '1919'
+const DEFAULT_ANNUAL_LEAVE_LIMIT = 15
+const ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE: Record<string, number> = {
+  이현택: 16,
+}
+
+function getAnnualLeaveLimit(name: string) {
+  if (name.includes('이현택')) return 16
+
+  return ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE[name] ?? DEFAULT_ANNUAL_LEAVE_LIMIT
+}
 
 function getKSTDateString(date = new Date()) {
   const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000)
@@ -280,6 +290,44 @@ export default function Home() {
       employeeRows,
     }
   }, [tasks, evaluationMode, evaluationMonth, evaluationYear])
+
+  const leaveSummaryYear = calendarMonth.slice(0, 4)
+
+  const leaveSummaryRows = useMemo(() => {
+    const byEmployee = new Map<string, { name: string; annualUsed: number; monthlyUsed: number }>()
+
+    tasks.forEach((task) => {
+      const name = task.user_name?.trim()
+      if (!name || name === '사장님') return
+
+      const taskDate = getTaskKSTDate(task)
+      if (!taskDate || taskDate.slice(0, 4) !== leaveSummaryYear) return
+
+      if (!byEmployee.has(name)) {
+        byEmployee.set(name, {
+          name,
+          annualUsed: 0,
+          monthlyUsed: 0,
+        })
+      }
+
+      const row = byEmployee.get(name)!
+      if (task.type === '연차') row.annualUsed += 1
+      if (task.type === '월차') row.monthlyUsed += 1
+    })
+
+    return [...byEmployee.values()]
+      .map((row) => {
+        const annualLimit = getAnnualLeaveLimit(row.name)
+
+        return {
+          ...row,
+          annualLimit,
+          remaining: annualLimit - row.annualUsed,
+        }
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+  }, [tasks, leaveSummaryYear])
 
   const handleDailySubmit = async () => {
     if (!writerName.trim()) {
@@ -786,6 +834,36 @@ export default function Home() {
                         className="border-2 border-black rounded-lg px-3 py-2 font-bold"
                       />
                     </div>
+
+                    <div className="mb-5 overflow-hidden rounded-2xl border-2 border-black">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-rose-50 p-3">
+                        <h4 className="font-black">직원별 연차 현황</h4>
+                        <span className="text-xs font-black text-slate-500">
+                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-[1.35fr_1fr_1fr_1fr] bg-slate-900 text-center text-xs font-black text-white sm:text-sm">
+                        <div className="p-3 text-left">이름</div>
+                        <div className="p-3">연차 사용</div>
+                        <div className="p-3">월차</div>
+                        <div className="p-3">잔여 연차</div>
+                      </div>
+
+                      {leaveSummaryRows.length === 0 ? (
+                        <div className="p-5 text-center font-bold text-slate-400">이 연도에 표시할 직원 기록이 없습니다.</div>
+                      ) : (
+                        leaveSummaryRows.map((row) => (
+                          <div key={row.name} className="grid grid-cols-[1.35fr_1fr_1fr_1fr] border-t-2 border-black bg-white text-center text-sm font-bold">
+                            <div className="truncate p-3 text-left font-black">{row.name}</div>
+                            <div className="p-3 text-rose-600 font-black">{row.annualUsed}회</div>
+                            <div className="p-3 text-slate-700 font-black">{row.monthlyUsed}회</div>
+                            <div className={`p-3 font-black ${row.remaining <= 2 ? 'text-rose-600' : 'text-emerald-600'}`}>{row.remaining}회</div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
                     <div className="grid grid-cols-7 gap-2 mb-4 text-center font-black">
                       {['일', '월', '화', '수', '목', '금', '토'].map((day) => (
                         <div key={day} className="py-2">
