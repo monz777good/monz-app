@@ -36,11 +36,30 @@ const DEFAULT_ANNUAL_LEAVE_LIMIT = 15
 const ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE: Record<string, number> = {
   이현택: 16,
 }
+const LEAVE_TYPES = ['연차', '월차', '반차']
+
+function isLeaveType(type: string) {
+  return LEAVE_TYPES.includes(type)
+}
 
 function getAnnualLeaveLimit(name: string) {
   if (name.includes('이현택')) return 16
 
   return ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE[name] ?? DEFAULT_ANNUAL_LEAVE_LIMIT
+}
+
+function normalizeEmployeeName(raw?: string | null) {
+  const name = (raw || '')
+    .replace(/^\s*\[?지시\]?\s*/i, '')
+    .replace(/^\s*to\.?\s*/i, '')
+    .trim()
+
+  if (name.includes('이현택')) return '이현택'
+  return name
+}
+
+function formatLeaveCount(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1)
 }
 
 function getKSTDateString(date = new Date()) {
@@ -82,7 +101,7 @@ function formatKSTDateOnly(value?: string | null) {
 }
 
 function getTaskKSTDate(task: TaskRow) {
-  if (task.type === '연차' || task.type === '월차') {
+  if (isLeaveType(task.type)) {
     return task.leave_date || null
   }
   if (!task.created_at) return null
@@ -179,7 +198,7 @@ export default function Home() {
     date: today,
   })
 
-  const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차' | '업무지시'>('전체')
+  const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차/반차' | '업무지시'>('전체')
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
   const [fromDate, setFromDate] = useState(today)
   const [toDate, setToDate] = useState(today)
@@ -294,10 +313,12 @@ export default function Home() {
   const leaveSummaryYear = calendarMonth.slice(0, 4)
 
   const leaveSummaryRows = useMemo(() => {
-    const byEmployee = new Map<string, { name: string; annualUsed: number; monthlyUsed: number }>()
+    const byEmployee = new Map<string, { name: string; annualUsed: number; halfUsed: number; monthlyUsed: number }>()
 
     tasks.forEach((task) => {
-      const name = task.user_name?.trim()
+      if (!isLeaveType(task.type)) return
+
+      const name = normalizeEmployeeName(task.user_name)
       if (!name || name === '사장님') return
 
       const taskDate = getTaskKSTDate(task)
@@ -307,23 +328,27 @@ export default function Home() {
         byEmployee.set(name, {
           name,
           annualUsed: 0,
+          halfUsed: 0,
           monthlyUsed: 0,
         })
       }
 
       const row = byEmployee.get(name)!
       if (task.type === '연차') row.annualUsed += 1
+      if (task.type === '반차') row.halfUsed += 1
       if (task.type === '월차') row.monthlyUsed += 1
     })
 
     return [...byEmployee.values()]
       .map((row) => {
         const annualLimit = getAnnualLeaveLimit(row.name)
+        const annualConsumed = row.annualUsed + row.halfUsed * 0.5
 
         return {
           ...row,
           annualLimit,
-          remaining: annualLimit - row.annualUsed,
+          annualConsumed,
+          remaining: annualLimit - annualConsumed,
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
@@ -459,7 +484,7 @@ export default function Home() {
     setLoading(false)
 
     if (error) {
-      alert(`연차/월차 등록 실패: ${error.message}`)
+      alert(`연차/월차/반차 등록 실패: ${error.message}`)
       return
     }
 
@@ -515,8 +540,8 @@ export default function Home() {
 
   const filteredTasks = tasks.filter((task) => {
     if (ownerTab !== '전체') {
-      if (ownerTab === '연차/월차') {
-        if (!(task.type === '연차' || task.type === '월차')) return false
+      if (ownerTab === '연차/월차/반차') {
+        if (!isLeaveType(task.type)) return false
       } else if (task.type !== ownerTab) {
         return false
       }
@@ -532,7 +557,7 @@ export default function Home() {
 
   const leaveTasks = tasks.filter(
     (task) =>
-      (task.type === '연차' || task.type === '월차') &&
+      isLeaveType(task.type) &&
       !!task.leave_date &&
       task.leave_date.slice(0, 7) === calendarMonth
   )
@@ -567,7 +592,7 @@ export default function Home() {
           onClick={() => setShowLeaveModal(true)}
           className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
         >
-          📅 연차/월차
+          📅 연차/월차/반차
         </button>
       </div>
 
@@ -689,7 +714,7 @@ export default function Home() {
             {isOwnerView && (
               <>
                 <div className="flex flex-wrap gap-2">
-                  {(['전체', '일일업무', '주간계획', '연차/월차', '업무지시'] as const).map((tab) => (
+                  {(['전체', '일일업무', '주간계획', '연차/월차/반차', '업무지시'] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setOwnerTab(tab)}
@@ -820,10 +845,10 @@ export default function Home() {
                   </div>
                 )}
 
-                {(ownerTab === '전체' || ownerTab === '연차/월차') && (
+                {(ownerTab === '전체' || ownerTab === '연차/월차/반차') && (
                   <div className="bg-white rounded-2xl border-2 border-black p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                      <h3 className="text-xl font-black text-rose-500">📅 연차/월차 달력</h3>
+                      <h3 className="text-xl font-black text-rose-500">📅 연차/월차/반차 달력</h3>
                       <input
                         type="month"
                         value={calendarMonth}
@@ -843,9 +868,10 @@ export default function Home() {
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-[1.35fr_1fr_1fr_1fr] bg-slate-900 text-center text-xs font-black text-white sm:text-sm">
+                      <div className="grid grid-cols-[1.35fr_0.9fr_0.9fr_0.9fr_1fr] bg-slate-900 text-center text-xs font-black text-white sm:text-sm">
                         <div className="p-3 text-left">이름</div>
-                        <div className="p-3">연차 사용</div>
+                        <div className="p-3">연차</div>
+                        <div className="p-3">반차</div>
                         <div className="p-3">월차</div>
                         <div className="p-3">잔여 연차</div>
                       </div>
@@ -854,11 +880,12 @@ export default function Home() {
                         <div className="p-5 text-center font-bold text-slate-400">이 연도에 표시할 직원 기록이 없습니다.</div>
                       ) : (
                         leaveSummaryRows.map((row) => (
-                          <div key={row.name} className="grid grid-cols-[1.35fr_1fr_1fr_1fr] border-t-2 border-black bg-white text-center text-sm font-bold">
+                          <div key={row.name} className="grid grid-cols-[1.35fr_0.9fr_0.9fr_0.9fr_1fr] border-t-2 border-black bg-white text-center text-sm font-bold">
                             <div className="truncate p-3 text-left font-black">{row.name}</div>
-                            <div className="p-3 text-rose-600 font-black">{row.annualUsed}회</div>
-                            <div className="p-3 text-slate-700 font-black">{row.monthlyUsed}회</div>
-                            <div className={`p-3 font-black ${row.remaining <= 2 ? 'text-rose-600' : 'text-emerald-600'}`}>{row.remaining}회</div>
+                            <div className="p-3 text-rose-600 font-black">{formatLeaveCount(row.annualUsed)}회</div>
+                            <div className="p-3 text-amber-600 font-black">{formatLeaveCount(row.halfUsed)}회</div>
+                            <div className="p-3 text-slate-700 font-black">{formatLeaveCount(row.monthlyUsed)}회</div>
+                            <div className={`p-3 font-black ${row.remaining <= 2 ? 'text-rose-600' : 'text-emerald-600'}`}>{formatLeaveCount(row.remaining)}회</div>
                           </div>
                         ))
                       )}
@@ -898,7 +925,7 @@ export default function Home() {
                       <div className="font-black mb-3">선택 날짜: {formatKSTDateOnly(selectedCalendarDate)}</div>
                       <div className="space-y-3">
                         {(leaveTaskMap[selectedCalendarDate] || []).length === 0 ? (
-                          <div className="font-bold text-slate-400">이 날짜의 연차/월차 신청이 없습니다.</div>
+                          <div className="font-bold text-slate-400">이 날짜의 연차/월차/반차 신청이 없습니다.</div>
                         ) : (
                           (leaveTaskMap[selectedCalendarDate] || []).map((task) => (
                             <div key={task.id} className="rounded-xl border-2 border-black bg-white p-3 flex justify-between gap-4">
@@ -933,7 +960,7 @@ export default function Home() {
                           className={`px-2 py-0.5 rounded-full text-[10px] font-black border border-black ${
                             task.type === '업무지시'
                               ? 'bg-amber-400'
-                              : task.type === '연차' || task.type === '월차'
+                              : isLeaveType(task.type)
                                 ? 'bg-rose-200'
                                 : task.type === '주간계획'
                                   ? 'bg-indigo-200'
@@ -953,7 +980,7 @@ export default function Home() {
                             </span>
                           </>
                         )}
-                        {(task.type === '연차' || task.type === '월차') && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
+                        {isLeaveType(task.type) && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
                       </div>
                       <span className="font-black text-sm text-right whitespace-nowrap">
                         {task.user_name} | {formatKSTDateTime(task.created_at)}
@@ -1035,7 +1062,7 @@ export default function Home() {
       {showLeaveModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
           <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-sm">
-            <h2 className="text-xl font-black mb-4">📅 연차/월차 신청</h2>
+            <h2 className="text-xl font-black mb-4">📅 연차/월차/반차 신청</h2>
             <select
               className="w-full mb-2 p-3 border-2 border-black rounded-lg"
               value={leaveData.type}
@@ -1043,6 +1070,7 @@ export default function Home() {
             >
               <option value="연차">연차</option>
               <option value="월차">월차</option>
+              <option value="반차">반차</option>
             </select>
             <input
               type="date"
