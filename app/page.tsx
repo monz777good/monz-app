@@ -38,6 +38,12 @@ const ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE: Record<string, number> = {
   전창식: 11,
   조승: 0,
 }
+const PRIOR_ANNUAL_USED_BY_EMPLOYEE: Record<string, number> = {
+  이현택: 4.5,
+}
+const LEAVE_COUNT_START_DATE_BY_EMPLOYEE: Record<string, string> = {
+  전창식: '2026-05-01',
+}
 const LEAVE_TYPES = ['연차', '월차', '반차']
 
 function isLeaveType(type: string) {
@@ -65,6 +71,20 @@ function normalizeEmployeeName(raw?: string | null) {
 
 function formatLeaveCount(value: number) {
   return Number.isInteger(value) ? String(value) : value.toFixed(1)
+}
+
+function getPriorAnnualUsed(name: string, year: string) {
+  if (year !== '2026') return 0
+
+  const overrideName = Object.keys(PRIOR_ANNUAL_USED_BY_EMPLOYEE).find((employeeName) => name.includes(employeeName))
+  return overrideName ? PRIOR_ANNUAL_USED_BY_EMPLOYEE[overrideName] : 0
+}
+
+function shouldCountLeaveForEmployee(name: string, taskDate: string) {
+  const overrideName = Object.keys(LEAVE_COUNT_START_DATE_BY_EMPLOYEE).find((employeeName) => name.includes(employeeName))
+  if (!overrideName) return true
+
+  return taskDate >= LEAVE_COUNT_START_DATE_BY_EMPLOYEE[overrideName]
 }
 
 function getKSTDateString(date = new Date()) {
@@ -318,7 +338,17 @@ export default function Home() {
   const leaveSummaryYear = calendarMonth.slice(0, 4)
 
   const leaveSummaryRows = useMemo(() => {
-    const byEmployee = new Map<string, { name: string; annualUsed: number; halfUsed: number; monthlyUsed: number }>()
+    const byEmployee = new Map<string, { name: string; priorUsed: number; annualUsed: number; halfUsed: number; monthlyUsed: number }>()
+
+    Object.keys(ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE).forEach((name) => {
+      byEmployee.set(name, {
+        name,
+        priorUsed: getPriorAnnualUsed(name, leaveSummaryYear),
+        annualUsed: 0,
+        halfUsed: 0,
+        monthlyUsed: 0,
+      })
+    })
 
     tasks.forEach((task) => {
       if (!isLeaveType(task.type)) return
@@ -328,10 +358,12 @@ export default function Home() {
 
       const taskDate = getTaskKSTDate(task)
       if (!taskDate || taskDate.slice(0, 4) !== leaveSummaryYear) return
+      if (!shouldCountLeaveForEmployee(name, taskDate)) return
 
       if (!byEmployee.has(name)) {
         byEmployee.set(name, {
           name,
+          priorUsed: getPriorAnnualUsed(name, leaveSummaryYear),
           annualUsed: 0,
           halfUsed: 0,
           monthlyUsed: 0,
@@ -347,7 +379,7 @@ export default function Home() {
     return [...byEmployee.values()]
       .map((row) => {
         const annualLimit = getAnnualLeaveLimit(row.name)
-        const annualConsumed = row.annualUsed + row.halfUsed * 0.5
+        const annualConsumed = row.priorUsed + row.annualUsed + row.halfUsed * 0.5
 
         return {
           ...row,
@@ -869,12 +901,13 @@ export default function Home() {
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-rose-50 p-3">
                         <h4 className="font-black">직원별 연차 현황</h4>
                         <span className="text-xs font-black text-slate-500">
-                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회 · 전창식 11회 · 조승 0회
+                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회(기존 4.5회 포함) · 전창식 11회(5월부터) · 조승 0회
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-[1.35fr_0.9fr_0.9fr_0.9fr_1fr] bg-slate-900 text-center text-xs font-black text-white sm:text-sm">
+                      <div className="grid grid-cols-[1.25fr_1fr_0.8fr_0.8fr_0.8fr_1fr] bg-slate-900 text-center text-xs font-black text-white sm:text-sm">
                         <div className="p-3 text-left">이름</div>
+                        <div className="p-3">연차 사용</div>
                         <div className="p-3">연차</div>
                         <div className="p-3">반차</div>
                         <div className="p-3">월차</div>
@@ -885,8 +918,12 @@ export default function Home() {
                         <div className="p-5 text-center font-bold text-slate-400">이 연도에 표시할 직원 기록이 없습니다.</div>
                       ) : (
                         leaveSummaryRows.map((row) => (
-                          <div key={row.name} className="grid grid-cols-[1.35fr_0.9fr_0.9fr_0.9fr_1fr] border-t-2 border-black bg-white text-center text-sm font-bold">
+                          <div key={row.name} className="grid grid-cols-[1.25fr_1fr_0.8fr_0.8fr_0.8fr_1fr] border-t-2 border-black bg-white text-center text-sm font-bold">
                             <div className="truncate p-3 text-left font-black">{row.name}</div>
+                            <div className="p-3 text-rose-600 font-black">
+                              {formatLeaveCount(row.annualConsumed)}회
+                              {row.priorUsed > 0 && <div className="text-[10px] text-slate-500">기존 {formatLeaveCount(row.priorUsed)}회</div>}
+                            </div>
                             <div className="p-3 text-rose-600 font-black">{formatLeaveCount(row.annualUsed)}회</div>
                             <div className="p-3 text-amber-600 font-black">{formatLeaveCount(row.halfUsed)}회</div>
                             <div className="p-3 text-slate-700 font-black">{formatLeaveCount(row.monthlyUsed)}회</div>
