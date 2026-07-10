@@ -36,10 +36,12 @@ const DEFAULT_ANNUAL_LEAVE_LIMIT = 15
 const ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE: Record<string, number> = {
   이현택: 16,
   전창식: 11,
+  안정은: 15,
   조승: 0,
 }
 const PRIOR_ANNUAL_USED_BY_EMPLOYEE: Record<string, number> = {
   이현택: 4.5,
+  안정은: 5,
 }
 const LEAVE_COUNT_START_DATE_BY_EMPLOYEE: Record<string, string> = {
   전창식: '2026-05-01',
@@ -65,6 +67,7 @@ function normalizeEmployeeName(raw?: string | null) {
 
   if (name.includes('이현택')) return '이현택'
   if (name.includes('전창식')) return '전창식'
+  if (name.includes('안정은')) return '안정은'
   if (name.includes('조승')) return '조승'
   return name
 }
@@ -977,7 +980,7 @@ export default function Home() {
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-rose-50 p-3">
                         <h4 className="font-black">직원별 연차 현황</h4>
                         <span className="text-xs font-black text-slate-500">
-                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회(기존 4.5회 포함) · 전창식 11회(5월부터) · 조승 0회
+                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회(기존 4.5회 포함) · 안정은 15회(기존 5회 포함) · 전창식 11회(5월부터) · 조승 0회
                         </span>
                       </div>
 
