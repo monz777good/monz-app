@@ -31,6 +31,24 @@ type EvaluationCount = {
   total: number
 }
 
+type ProductionManualItem = {
+  id: string
+  text: string
+}
+
+type ProductionCheckAnswer = {
+  itemId: string
+  text: string
+  answer: '예' | '아니오'
+  note: string
+}
+
+type ProductionCheckPayload = {
+  date: string
+  producer: string
+  answers: ProductionCheckAnswer[]
+}
+
 const OWNER_PIN = '1919'
 const DEFAULT_ANNUAL_LEAVE_LIMIT = 15
 const ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE: Record<string, number> = {
@@ -46,10 +64,31 @@ const PRIOR_ANNUAL_USED_BY_EMPLOYEE: Record<string, number> = {
 const LEAVE_COUNT_START_DATE_BY_EMPLOYEE: Record<string, string> = {
   전창식: '2026-05-01',
 }
+const MONTHLY_LEAVE_RULE_BY_EMPLOYEE: Record<string, { baseMonth: string; baseAllowance: number }> = {
+  조승: { baseMonth: '2026-07', baseAllowance: 5 },
+}
+const KNOWN_EMPLOYEES = ['이현택', '전창식', '안정은', '조승']
 const LEAVE_TYPES = ['연차', '월차', '반차']
+const INSTRUCTION_TYPES = ['업무지시', '업무요청']
+const PRODUCTION_MANUAL_TYPE = '생산매뉴얼'
+const PRODUCTION_CHECK_TYPE = '생산체크'
+const DEFAULT_PRODUCTION_MANUAL_ITEMS: ProductionManualItem[] = [
+  { id: 'clean-workbench', text: '작업대와 주변 정리 상태를 확인했습니다.' },
+  { id: 'check-ingredients', text: '생산 원료와 수량을 확인했습니다.' },
+  { id: 'check-label', text: '라벨/환자명/처방 정보를 확인했습니다.' },
+  { id: 'check-machine', text: '기기 작동 상태와 안전 상태를 확인했습니다.' },
+]
 
 function isLeaveType(type: string) {
   return LEAVE_TYPES.includes(type)
+}
+
+function isInstructionType(type: string) {
+  return INSTRUCTION_TYPES.includes(type)
+}
+
+function isSystemTaskType(type: string) {
+  return type === PRODUCTION_MANUAL_TYPE || type === PRODUCTION_CHECK_TYPE
 }
 
 function getAnnualLeaveLimit(name: string) {
@@ -57,6 +96,20 @@ function getAnnualLeaveLimit(name: string) {
   if (overrideName) return ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE[overrideName]
 
   return ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE[name] ?? DEFAULT_ANNUAL_LEAVE_LIMIT
+}
+
+function monthDiff(fromMonth: string, toMonth: string) {
+  const [fromYear, from] = fromMonth.split('-').map(Number)
+  const [toYear, to] = toMonth.split('-').map(Number)
+  return (toYear - fromYear) * 12 + (to - from)
+}
+
+function getMonthlyLeaveLimit(name: string, month: string) {
+  const overrideName = Object.keys(MONTHLY_LEAVE_RULE_BY_EMPLOYEE).find((employeeName) => name.includes(employeeName))
+  if (!overrideName) return null
+
+  const rule = MONTHLY_LEAVE_RULE_BY_EMPLOYEE[overrideName]
+  return Math.max(0, rule.baseAllowance + monthDiff(rule.baseMonth, month))
 }
 
 function normalizeEmployeeName(raw?: string | null) {
@@ -88,6 +141,53 @@ function shouldCountLeaveForEmployee(name: string, taskDate: string) {
   if (!overrideName) return true
 
   return taskDate >= LEAVE_COUNT_START_DATE_BY_EMPLOYEE[overrideName]
+}
+
+function parseProductionManualItems(content?: string | null) {
+  if (!content) return DEFAULT_PRODUCTION_MANUAL_ITEMS
+
+  try {
+    const parsed = JSON.parse(content) as ProductionManualItem[]
+    if (Array.isArray(parsed)) {
+      const items = parsed
+        .map((item, index) => ({
+          id: String(item.id || `item-${index + 1}`),
+          text: String(item.text || '').trim(),
+        }))
+        .filter((item) => item.text)
+
+      if (items.length > 0) return items
+    }
+  } catch {
+    const lines = content
+      .split('\n')
+      .map((line, index) => ({ id: `item-${index + 1}`, text: line.trim() }))
+      .filter((item) => item.text)
+
+    if (lines.length > 0) return lines
+  }
+
+  return DEFAULT_PRODUCTION_MANUAL_ITEMS
+}
+
+function serializeProductionManualItems(draft: string) {
+  return draft
+    .split('\n')
+    .map((line, index) => ({ id: `item-${index + 1}`, text: line.trim() }))
+    .filter((item) => item.text)
+}
+
+function parseProductionCheckPayload(content?: string | null) {
+  if (!content) return null
+
+  try {
+    const parsed = JSON.parse(content) as ProductionCheckPayload
+    if (parsed && Array.isArray(parsed.answers)) return parsed
+  } catch {
+    return null
+  }
+
+  return null
 }
 
 function getKSTDateString(date = new Date()) {
@@ -213,9 +313,16 @@ export default function Home() {
   const [tasks, setTasks] = useState<TaskRow[]>([])
 
   const [showOrderModal, setShowOrderModal] = useState(false)
+  const [showEmployeeRequestModal, setShowEmployeeRequestModal] = useState(false)
   const [showLeaveModal, setShowLeaveModal] = useState(false)
+  const [showProductionModal, setShowProductionModal] = useState(false)
 
   const [orderData, setOrderData] = useState({
+    to: '',
+    content: '',
+  })
+
+  const [employeeRequestData, setEmployeeRequestData] = useState({
     to: '',
     content: '',
   })
@@ -226,7 +333,12 @@ export default function Home() {
     date: today,
   })
 
-  const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차/반차' | '업무지시'>('전체')
+  const [producerName, setProducerName] = useState('')
+  const [productionDate, setProductionDate] = useState(today)
+  const [productionAnswers, setProductionAnswers] = useState<Record<string, { answer: '' | '예' | '아니오'; note: string }>>({})
+  const [manualDraft, setManualDraft] = useState('')
+
+  const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차/반차' | '업무지시' | '업무요청'>('전체')
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
   const [fromDate, setFromDate] = useState(today)
   const [toDate, setToDate] = useState(today)
@@ -339,6 +451,35 @@ export default function Home() {
     }
   }, [tasks, evaluationMode, evaluationMonth, evaluationYear])
 
+  const employeeOptions = useMemo(() => {
+    const names = new Set(KNOWN_EMPLOYEES)
+
+    tasks.forEach((task) => {
+      const userName = normalizeEmployeeName(task.user_name)
+      if (userName && userName !== '사장님') names.add(userName)
+
+      normalizeNameList(task.target_name).forEach((targetName) => {
+        const normalized = normalizeEmployeeName(targetName)
+        if (normalized && normalized !== '전체') names.add(normalized)
+      })
+    })
+
+    return [...names].sort((a, b) => a.localeCompare(b, 'ko'))
+  }, [tasks])
+
+  const productionManualRow = useMemo(() => tasks.find((task) => task.type === PRODUCTION_MANUAL_TYPE), [tasks])
+  const productionManualItems = useMemo(() => parseProductionManualItems(productionManualRow?.task_content), [productionManualRow])
+  const productionSubmissions = useMemo(
+    () =>
+      tasks
+        .filter((task) => task.type === PRODUCTION_CHECK_TYPE)
+        .map((task) => ({ task, payload: parseProductionCheckPayload(task.task_content) }))
+        .filter((row) => row.payload)
+        .sort((a, b) => new Date(b.task.created_at || '').getTime() - new Date(a.task.created_at || '').getTime())
+        .slice(0, 8),
+    [tasks]
+  )
+
   const leaveSummaryYear = calendarMonth.slice(0, 4)
 
   const leaveSummaryRows = useMemo(() => {
@@ -383,17 +524,23 @@ export default function Home() {
     return [...byEmployee.values()]
       .map((row) => {
         const annualLimit = getAnnualLeaveLimit(row.name)
-        const annualConsumed = row.priorUsed + row.annualUsed + row.halfUsed * 0.5
+        const monthlyLimit = getMonthlyLeaveLimit(row.name, calendarMonth)
+        const monthlyConsumed =
+          monthlyLimit === null ? row.monthlyUsed : row.monthlyUsed + row.annualUsed + row.halfUsed * 0.5
+        const annualConsumed = monthlyLimit === null ? row.priorUsed + row.annualUsed + row.halfUsed * 0.5 : 0
+        const remaining = monthlyLimit === null ? annualLimit - annualConsumed : monthlyLimit - monthlyConsumed
 
         return {
           ...row,
           annualLimit,
+          monthlyLimit,
           annualConsumed,
-          remaining: annualLimit - annualConsumed,
+          monthlyConsumed,
+          remaining,
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
-  }, [tasks, leaveSummaryYear])
+  }, [tasks, leaveSummaryYear, calendarMonth])
 
   const handleDailySubmit = async () => {
     if (!writerName.trim()) {
@@ -500,6 +647,151 @@ export default function Home() {
     await fetchTasks()
   }
 
+  const handleEmployeeRequestSubmit = async () => {
+    if (!writerName.trim()) {
+      alert('성함을 먼저 입력해주세요!')
+      return
+    }
+    if (!employeeRequestData.to.trim() || !employeeRequestData.content.trim()) {
+      alert('직원과 요청 내용을 입력해주세요!')
+      return
+    }
+    if (normalizeEmployeeName(employeeRequestData.to) === normalizeEmployeeName(writerName)) {
+      alert('본인에게는 업무요청을 보낼 수 없습니다.')
+      return
+    }
+
+    setLoading(true)
+
+    const { error } = await supabase.from('MONZ').insert([
+      {
+        user_name: writerName.trim(),
+        task_content: employeeRequestData.content.trim(),
+        type: '업무요청',
+        target_name: employeeRequestData.to.trim(),
+        instruction_status: '대기',
+        instruction_result_mark: null,
+        created_at: new Date().toISOString(),
+      },
+    ])
+
+    setLoading(false)
+
+    if (error) {
+      alert(`업무요청 등록 실패: ${error.message}`)
+      return
+    }
+
+    alert('업무요청 등록 완료!')
+    setEmployeeRequestData({ to: '', content: '' })
+    setShowEmployeeRequestModal(false)
+    await fetchTasks()
+  }
+
+  const openProductionModal = () => {
+    setProductionDate(getKSTDateString())
+    setProducerName((prev) => prev || writerName.trim())
+    setManualDraft(productionManualItems.map((item) => item.text).join('\n'))
+    setProductionAnswers((prev) => {
+      const next = { ...prev }
+      productionManualItems.forEach((item) => {
+        if (!next[item.id]) next[item.id] = { answer: '', note: '' }
+      })
+      return next
+    })
+    setShowProductionModal(true)
+  }
+
+  const handleSaveProductionManual = async () => {
+    if (!isOwnerView) {
+      alert('사장님 인증 후 수정할 수 있습니다.')
+      return
+    }
+
+    const items = serializeProductionManualItems(manualDraft)
+    if (items.length === 0) {
+      alert('체크리스트 항목을 1개 이상 입력해주세요.')
+      return
+    }
+
+    setLoading(true)
+
+    const payload = {
+      user_name: '사장님',
+      task_content: JSON.stringify(items),
+      type: PRODUCTION_MANUAL_TYPE,
+      created_at: new Date().toISOString(),
+    }
+
+    const { error } = productionManualRow
+      ? await supabase
+          .from('MONZ')
+          .update({
+            task_content: payload.task_content,
+            created_at: payload.created_at,
+          })
+          .eq('id', productionManualRow.id)
+      : await supabase.from('MONZ').insert([payload])
+
+    setLoading(false)
+
+    if (error) {
+      alert(`체크리스트 저장 실패: ${error.message}`)
+      return
+    }
+
+    alert('체크리스트 저장 완료!')
+    await fetchTasks()
+  }
+
+  const handleProductionSubmit = async () => {
+    const producer = producerName.trim() || writerName.trim()
+    if (!producer) {
+      alert('생산자를 입력해주세요.')
+      return
+    }
+
+    const missingItem = productionManualItems.find((item) => !productionAnswers[item.id]?.answer)
+    if (missingItem) {
+      alert('모든 항목에 예/아니오를 체크해주세요.')
+      return
+    }
+
+    const payload: ProductionCheckPayload = {
+      date: productionDate,
+      producer,
+      answers: productionManualItems.map((item) => ({
+        itemId: item.id,
+        text: item.text,
+        answer: productionAnswers[item.id].answer as '예' | '아니오',
+        note: productionAnswers[item.id].note || '',
+      })),
+    }
+
+    setLoading(true)
+
+    const { error } = await supabase.from('MONZ').insert([
+      {
+        user_name: producer,
+        task_content: JSON.stringify(payload),
+        type: PRODUCTION_CHECK_TYPE,
+        created_at: new Date().toISOString(),
+      },
+    ])
+
+    setLoading(false)
+
+    if (error) {
+      alert(`생산 체크 저장 실패: ${error.message}`)
+      return
+    }
+
+    alert('생산 체크 저장 완료!')
+    setProductionAnswers({})
+    setShowProductionModal(false)
+    await fetchTasks()
+  }
+
   const handleLeaveSubmit = async () => {
     if (!writerName.trim()) {
       alert('이름부터 입력해주세요!')
@@ -579,7 +871,7 @@ export default function Home() {
   }
 
   const myInstructions = tasks.filter((task) => {
-    if (task.type !== '업무지시') return false
+    if (!isInstructionType(task.type)) return false
     if (task.instruction_status === '완료') return false
     return matchesTarget(task.target_name, writerName)
   })
@@ -593,7 +885,7 @@ export default function Home() {
         const taskDate = getTaskKSTDate(task)
         if (taskDate !== employeeHistoryDate) return false
 
-        if (task.type === '업무지시') {
+        if (isInstructionType(task.type)) {
           return matchesTarget(task.target_name, writerName)
         }
 
@@ -607,6 +899,8 @@ export default function Home() {
   }, [tasks, writerName, employeeHistoryDate])
 
   const filteredTasks = tasks.filter((task) => {
+    if (isSystemTaskType(task.type)) return false
+
     if (ownerTab !== '전체') {
       if (ownerTab === '연차/월차/반차') {
         if (!isLeaveType(task.type)) return false
@@ -649,12 +943,26 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-50 py-10 px-4 font-sans text-slate-900">
-      <div className="max-w-5xl mx-auto flex justify-between mb-4">
+      <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={() => (isOwnerView ? setShowOrderModal(true) : alert('사장님 PIN 인증부터 해주세요!'))}
+            className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+          >
+            📢 사장님전용 업무지시
+          </button>
+          <button
+            onClick={() => setShowEmployeeRequestModal(true)}
+            className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+          >
+            🤝 직원용 업무요청
+          </button>
+        </div>
         <button
-          onClick={() => (isOwnerView ? setShowOrderModal(true) : alert('사장님 PIN 인증부터 해주세요!'))}
+          onClick={openProductionModal}
           className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
         >
-          📢 업무지시
+          ✅ 생산 메뉴얼 확인체크
         </button>
         <button
           onClick={() => setShowLeaveModal(true)}
@@ -672,7 +980,7 @@ export default function Home() {
       {writerName.trim() && myInstructions.length > 0 && (
         <div className="max-w-5xl mx-auto mb-6">
           <div className="bg-stone-100 border-2 border-black rounded-2xl p-5 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-            <div className="text-center text-2xl font-black text-amber-600 mb-4">📢 업무지시 확인하기</div>
+            <div className="text-center text-2xl font-black text-amber-600 mb-4">📢 업무지시/요청 확인하기</div>
             <div className="space-y-4">
               {myInstructions.map((task) => (
                 <div
@@ -680,7 +988,9 @@ export default function Home() {
                   className="bg-white border-2 border-black rounded-2xl p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 >
                   <div className="flex flex-wrap justify-between gap-3 mb-3">
-                    <div className="font-black">대상: {task.target_name || '전체'}</div>
+                    <div className="font-black">
+                      {task.type === '업무요청' ? `요청자: ${task.user_name}` : '사장님 지시'} · 대상: {task.target_name || '전체'}
+                    </div>
                     <div className="text-sm font-black text-slate-500">{formatKSTDateTime(task.created_at)}</div>
                   </div>
                   <div className="font-bold whitespace-pre-wrap mb-4">{task.task_content}</div>
@@ -741,7 +1051,7 @@ export default function Home() {
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-full border border-black bg-white px-3 py-1 text-xs font-black">{task.type}</span>
-                        {task.type === '업무지시' && (
+                        {isInstructionType(task.type) && (
                           <>
                             <span className={`rounded-full border border-black px-3 py-1 text-xs font-black ${statusColor(task.instruction_status)}`}>
                               상태: {task.instruction_status || '대기'}
@@ -755,8 +1065,23 @@ export default function Home() {
                       </div>
                       <span className="text-sm font-black text-slate-500">{formatKSTDateTime(task.created_at)}</span>
                     </div>
-                    {task.type === '업무지시' && <div className="mb-2 text-sm font-black text-slate-600">대상: {task.target_name || '전체'}</div>}
-                    <div className="whitespace-pre-wrap font-bold">{task.task_content}</div>
+                    {isInstructionType(task.type) && (
+                      <div className="mb-2 text-sm font-black text-slate-600">
+                        {task.type === '업무요청' ? `요청자: ${task.user_name}` : '사장님 지시'} · 대상: {task.target_name || '전체'}
+                      </div>
+                    )}
+                    {task.type === PRODUCTION_CHECK_TYPE ? (
+                      <div className="whitespace-pre-wrap font-bold">
+                        생산 메뉴얼 확인체크 완료
+                        <div className="mt-1 text-sm text-slate-600">
+                          {parseProductionCheckPayload(task.task_content)
+                            ?.answers.map((answer) => `${answer.text}: ${answer.answer}${answer.note ? `(${answer.note})` : ''}`)
+                            .join(' / ')}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="whitespace-pre-wrap font-bold">{task.task_content}</div>
+                    )}
                   </div>
                 ))
               )}
@@ -830,7 +1155,7 @@ export default function Home() {
             {isOwnerView && (
               <>
                 <div className="flex flex-wrap gap-2">
-                  {(['전체', '일일업무', '주간계획', '연차/월차/반차', '업무지시'] as const).map((tab) => (
+                  {(['전체', '일일업무', '주간계획', '연차/월차/반차', '업무지시', '업무요청'] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setOwnerTab(tab)}
@@ -980,17 +1305,17 @@ export default function Home() {
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-rose-50 p-3">
                         <h4 className="font-black">직원별 연차 현황</h4>
                         <span className="text-xs font-black text-slate-500">
-                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회(기존 4.5회 포함) · 안정은 15회(기존 5회 포함) · 전창식 11회(5월부터) · 조승 0회
+                          {leaveSummaryYear}년 기준 · 기본 {DEFAULT_ANNUAL_LEAVE_LIMIT}회 · 이현택 16회(기존 4.5회 포함) · 안정은 15회(기존 5회 포함) · 전창식 11회(5월부터) · 조승 월차 5회(매월 +1)
                         </span>
                       </div>
 
                       <div className="grid grid-cols-[1.25fr_1fr_0.8fr_0.8fr_0.8fr_1fr] bg-slate-900 text-center text-xs font-black text-white sm:text-sm">
                         <div className="p-3 text-left">이름</div>
-                        <div className="p-3">연차 사용</div>
+                        <div className="p-3">사용 합계</div>
                         <div className="p-3">연차</div>
                         <div className="p-3">반차</div>
                         <div className="p-3">월차</div>
-                        <div className="p-3">잔여 연차</div>
+                        <div className="p-3">잔여</div>
                       </div>
 
                       {leaveSummaryRows.length === 0 ? (
@@ -1000,8 +1325,9 @@ export default function Home() {
                           <div key={row.name} className="grid grid-cols-[1.25fr_1fr_0.8fr_0.8fr_0.8fr_1fr] border-t-2 border-black bg-white text-center text-sm font-bold">
                             <div className="truncate p-3 text-left font-black">{row.name}</div>
                             <div className="p-3 text-rose-600 font-black">
-                              {formatLeaveCount(row.annualConsumed)}회
+                              {formatLeaveCount(row.monthlyLimit === null ? row.annualConsumed : row.monthlyConsumed)}회
                               {row.priorUsed > 0 && <div className="text-[10px] text-slate-500">기존 {formatLeaveCount(row.priorUsed)}회</div>}
+                              {row.monthlyLimit !== null && <div className="text-[10px] text-slate-500">월차 기준 {formatLeaveCount(row.monthlyLimit)}회</div>}
                             </div>
                             <div className="p-3 text-rose-600 font-black">{formatLeaveCount(row.annualUsed)}회</div>
                             <div className="p-3 text-amber-600 font-black">{formatLeaveCount(row.halfUsed)}회</div>
@@ -1079,7 +1405,7 @@ export default function Home() {
                       <div className="flex gap-2 items-center flex-wrap">
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-black border border-black ${
-                            task.type === '업무지시'
+                            isInstructionType(task.type)
                               ? 'bg-amber-400'
                               : isLeaveType(task.type)
                                 ? 'bg-rose-200'
@@ -1090,9 +1416,11 @@ export default function Home() {
                         >
                           {task.type}
                         </span>
-                        {task.type === '업무지시' && (
+                        {isInstructionType(task.type) && (
                           <>
-                            <span className="text-xs font-black text-slate-500">대상: {task.target_name}</span>
+                            <span className="text-xs font-black text-slate-500">
+                              {task.type === '업무요청' ? `요청자: ${task.user_name}` : '사장님 지시'} · 대상: {task.target_name}
+                            </span>
                             <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>
                               상태: {task.instruction_status || '대기'}
                             </span>
@@ -1110,7 +1438,7 @@ export default function Home() {
 
                     <p className="font-bold whitespace-pre-wrap">{task.task_content}</p>
 
-                    {task.type === '업무지시' && (
+                    {isInstructionType(task.type) && (
                       <div className="mt-4 rounded-2xl border-2 border-black bg-slate-50 p-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-black text-sm mr-2">업무결과 평가</span>
@@ -1152,10 +1480,148 @@ export default function Home() {
         </div>
       </div>
 
+      {showEmployeeRequestModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
+          <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-md">
+            <h2 className="text-xl font-black mb-4">🤝 직원용 업무요청</h2>
+            <select
+              className="w-full mb-2 p-3 border-2 border-black rounded-lg"
+              value={employeeRequestData.to}
+              onChange={(e) => setEmployeeRequestData({ ...employeeRequestData, to: e.target.value })}
+            >
+              <option value="">직원 선택</option>
+              {employeeOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+            <textarea
+              className="w-full h-28 p-3 border-2 border-black rounded-lg mb-4"
+              placeholder="업무요청 내용"
+              value={employeeRequestData.content}
+              onChange={(e) => setEmployeeRequestData({ ...employeeRequestData, content: e.target.value })}
+            />
+            <div className="flex gap-2">
+              <button onClick={handleEmployeeRequestSubmit} disabled={loading} className="flex-1 bg-amber-500 text-white py-3 rounded-lg disabled:opacity-60">
+                요청
+              </button>
+              <button onClick={() => setShowEmployeeRequestModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showProductionModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
+          <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className="text-xl font-black">✅ 생산 메뉴얼 확인체크</h2>
+              <div className="text-sm font-black text-slate-500">{formatKSTDateOnly(productionDate)}</div>
+            </div>
+
+            <input
+              className="w-full mb-4 p-3 border-2 border-black rounded-lg"
+              placeholder="생산자"
+              value={producerName}
+              onChange={(e) => setProducerName(e.target.value)}
+            />
+
+            {isOwnerView && (
+              <div className="mb-5 rounded-2xl border-2 border-black bg-amber-50 p-4">
+                <div className="mb-2 font-black">사장님 체크리스트 수정</div>
+                <textarea
+                  className="w-full h-32 p-3 border-2 border-black rounded-lg bg-white"
+                  value={manualDraft}
+                  onChange={(e) => setManualDraft(e.target.value)}
+                />
+                <button onClick={handleSaveProductionManual} disabled={loading} className="mt-3 rounded-lg bg-teal-700 px-4 py-2 text-white disabled:opacity-60">
+                  체크리스트 저장
+                </button>
+              </div>
+            )}
+
+            <div className="space-y-3">
+              {productionManualItems.map((item, index) => (
+                <div key={item.id} className="rounded-2xl border-2 border-black bg-slate-50 p-4">
+                  <div className="mb-3 font-black">
+                    {index + 1}. {item.text}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {(['예', '아니오'] as const).map((answer) => (
+                      <label key={answer} className="flex items-center gap-2 rounded-lg border-2 border-black bg-white px-3 py-2">
+                        <input
+                          type="radio"
+                          name={`production-${item.id}`}
+                          checked={productionAnswers[item.id]?.answer === answer}
+                          onChange={() =>
+                            setProductionAnswers({
+                              ...productionAnswers,
+                              [item.id]: {
+                                answer,
+                                note: productionAnswers[item.id]?.note || '',
+                              },
+                            })
+                          }
+                        />
+                        {answer}
+                      </label>
+                    ))}
+                    <input
+                      className="min-w-[220px] flex-1 rounded-lg border-2 border-black bg-white px-3 py-2"
+                      placeholder="비고"
+                      value={productionAnswers[item.id]?.note || ''}
+                      onChange={(e) =>
+                        setProductionAnswers({
+                          ...productionAnswers,
+                          [item.id]: {
+                            answer: productionAnswers[item.id]?.answer || '',
+                            note: e.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {isOwnerView && productionSubmissions.length > 0 && (
+              <div className="mt-5 rounded-2xl border-2 border-black bg-white p-4">
+                <div className="mb-3 font-black">최근 생산 체크 기록</div>
+                <div className="space-y-2">
+                  {productionSubmissions.map(({ task, payload }) => (
+                    <div key={task.id} className="rounded-xl border border-slate-300 p-3 text-sm">
+                      <div className="font-black">
+                        {payload?.producer} · {formatKSTDateTime(task.created_at)}
+                      </div>
+                      <div className="mt-1 text-slate-600">
+                        {payload?.answers.map((answer) => `${answer.text}: ${answer.answer}${answer.note ? `(${answer.note})` : ''}`).join(' / ')}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 flex gap-2">
+              <button onClick={handleProductionSubmit} disabled={loading} className="flex-1 bg-teal-700 text-white py-3 rounded-lg disabled:opacity-60">
+                체크 저장
+              </button>
+              <button onClick={() => setShowProductionModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">
+                닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showOrderModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
           <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-md">
-            <h2 className="text-xl font-black mb-4">📢 업무 지시</h2>
+            <h2 className="text-xl font-black mb-4">📢 사장님전용 업무지시</h2>
             <input
               className="w-full mb-2 p-3 border-2 border-black rounded-lg"
               placeholder="직원명"
