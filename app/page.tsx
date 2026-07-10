@@ -338,11 +338,15 @@ export default function Home() {
   const [productionAnswers, setProductionAnswers] = useState<Record<string, { answer: '' | '예' | '아니오'; note: string }>>({})
   const [manualDraft, setManualDraft] = useState('')
 
-  const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차/반차' | '업무지시' | '업무요청'>('전체')
+  const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차/반차' | '업무지시' | '업무요청' | '생산체크'>('전체')
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
   const [fromDate, setFromDate] = useState(today)
   const [toDate, setToDate] = useState(today)
   const [employeeHistoryDate, setEmployeeHistoryDate] = useState(today)
+  const [productionHistoryMode, setProductionHistoryMode] = useState<'year' | 'date'>('date')
+  const [productionHistoryYear, setProductionHistoryYear] = useState(today.slice(0, 4))
+  const [productionHistoryDate, setProductionHistoryDate] = useState(today)
+  const [productionHistoryProducer, setProductionHistoryProducer] = useState('전체')
 
   const [calendarMonth, setCalendarMonth] = useState(today.slice(0, 7))
   const [selectedCalendarDate, setSelectedCalendarDate] = useState(today)
@@ -455,15 +459,47 @@ export default function Home() {
 
   const productionManualRow = useMemo(() => tasks.find((task) => task.type === PRODUCTION_MANUAL_TYPE), [tasks])
   const productionManualItems = useMemo(() => parseProductionManualItems(productionManualRow?.task_content), [productionManualRow])
-  const productionSubmissions = useMemo(
+  const productionSubmissionRows = useMemo(
     () =>
       tasks
         .filter((task) => task.type === PRODUCTION_CHECK_TYPE)
         .map((task) => ({ task, payload: parseProductionCheckPayload(task.task_content) }))
         .filter((row) => row.payload)
-        .sort((a, b) => new Date(b.task.created_at || '').getTime() - new Date(a.task.created_at || '').getTime())
-        .slice(0, 8),
+        .sort((a, b) => new Date(b.task.created_at || '').getTime() - new Date(a.task.created_at || '').getTime()),
     [tasks]
+  )
+  const productionSubmissions = useMemo(() => productionSubmissionRows.slice(0, 8), [productionSubmissionRows])
+  const periodProductionSubmissions = useMemo(
+    () =>
+      productionSubmissionRows.filter(({ task, payload }) => {
+        const taskDate = getTaskKSTDate(task)
+        if (!taskDate) return false
+
+        if (productionHistoryMode === 'year') {
+          if (taskDate.slice(0, 4) !== productionHistoryYear) return false
+        } else if (taskDate !== productionHistoryDate) {
+          return false
+        }
+
+        return true
+      }),
+    [productionSubmissionRows, productionHistoryMode, productionHistoryYear, productionHistoryDate]
+  )
+  const filteredProductionSubmissions = useMemo(
+    () =>
+      periodProductionSubmissions.filter(({ payload }) => {
+        if (productionHistoryProducer === '전체') return true
+        return normalizeEmployeeName(payload?.producer) === productionHistoryProducer
+      }),
+    [periodProductionSubmissions, productionHistoryProducer]
+  )
+  const productionSummaryRows = useMemo(
+    () =>
+      employeeOptions.map((name) => ({
+        name,
+        count: periodProductionSubmissions.filter(({ payload }) => normalizeEmployeeName(payload?.producer) === name).length,
+      })),
+    [employeeOptions, periodProductionSubmissions]
   )
 
   const leaveSummaryYear = calendarMonth.slice(0, 4)
@@ -1143,7 +1179,7 @@ export default function Home() {
             {isOwnerView && (
               <>
                 <div className="flex flex-wrap gap-2">
-                  {(['전체', '일일업무', '주간계획', '연차/월차/반차', '업무지시', '업무요청'] as const).map((tab) => (
+                  {(['전체', '일일업무', '주간계획', '연차/월차/반차', '업무지시', '업무요청', '생산체크'] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setOwnerTab(tab)}
@@ -1274,6 +1310,118 @@ export default function Home() {
                   </div>
                 )}
 
+                {(ownerTab === '전체' || ownerTab === '생산체크') && (
+                  <div className="bg-white rounded-2xl border-2 border-black p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                      <h3 className="text-xl font-black text-teal-700">✅ 생산 체크 기록</h3>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setProductionHistoryMode('date')}
+                          className={`px-4 py-2 rounded-xl border-2 border-black font-black ${
+                            productionHistoryMode === 'date' ? 'bg-teal-700 text-white' : 'bg-white text-black'
+                          }`}
+                        >
+                          날짜별
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setProductionHistoryMode('year')}
+                          className={`px-4 py-2 rounded-xl border-2 border-black font-black ${
+                            productionHistoryMode === 'year' ? 'bg-teal-700 text-white' : 'bg-white text-black'
+                          }`}
+                        >
+                          연도별
+                        </button>
+                        {productionHistoryMode === 'date' ? (
+                          <input
+                            type="date"
+                            value={productionHistoryDate}
+                            onChange={(e) => setProductionHistoryDate(e.target.value)}
+                            className="border-2 border-black rounded-lg px-3 py-2 font-bold"
+                          />
+                        ) : (
+                          <input
+                            type="number"
+                            min="2000"
+                            max="2100"
+                            value={productionHistoryYear}
+                            onChange={(e) => setProductionHistoryYear(e.target.value)}
+                            className="w-28 border-2 border-black rounded-lg px-3 py-2 font-bold"
+                          />
+                        )}
+                        <select
+                          value={productionHistoryProducer}
+                          onChange={(e) => setProductionHistoryProducer(e.target.value)}
+                          className="border-2 border-black rounded-lg px-3 py-2 font-bold"
+                        >
+                          <option value="전체">전체 생산자</option>
+                          {employeeOptions.map((name) => (
+                            <option key={name} value={name}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3 mb-5 sm:grid-cols-4">
+                      {productionSummaryRows.map((row) => (
+                        <button
+                          type="button"
+                          key={row.name}
+                          onClick={() => setProductionHistoryProducer(row.name)}
+                          className={`rounded-xl border-2 border-black p-3 text-left font-black ${
+                            productionHistoryProducer === row.name ? 'bg-teal-700 text-white' : 'bg-slate-50 text-black'
+                          }`}
+                        >
+                          <div>{row.name}</div>
+                          <div className="mt-1 text-2xl">{row.count}건</div>
+                        </button>
+                      ))}
+                    </div>
+
+                    {filteredProductionSubmissions.length === 0 ? (
+                      <div className="rounded-2xl border-2 border-dashed border-slate-300 p-5 text-center font-bold text-slate-400">
+                        조건에 맞는 생산 체크 기록이 없습니다.
+                      </div>
+                    ) : (
+                      <div className="space-y-5">
+                        {filteredProductionSubmissions.map(({ task, payload }) => (
+                          <div key={task.id} className="overflow-hidden rounded-2xl border-2 border-black bg-white">
+                            <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-slate-100 p-3 font-black">
+                              <span>생산자: {payload?.producer}</span>
+                              <span className="text-slate-500">{formatKSTDateTime(task.created_at)}</span>
+                            </div>
+                            <div className="overflow-x-auto">
+                              <div className="min-w-[720px]">
+                                <div className="grid grid-cols-[1fr_80px_90px_1fr] bg-slate-900 text-center text-sm font-black text-white">
+                                  <div className="p-3 text-left">체크 항목</div>
+                                  <div className="p-3">예</div>
+                                  <div className="p-3">아니오</div>
+                                  <div className="p-3 text-left">비고</div>
+                                </div>
+                                {payload?.answers.map((answer) => (
+                                  <div key={answer.itemId} className="grid grid-cols-[1fr_80px_90px_1fr] border-t border-slate-300 text-center">
+                                    <div className="p-3 text-left font-bold">{answer.text}</div>
+                                    <div className={`p-3 font-black ${answer.answer === '예' ? 'text-emerald-600' : 'text-slate-300'}`}>
+                                      {answer.answer === '예' ? '✓' : '-'}
+                                    </div>
+                                    <div className={`p-3 font-black ${answer.answer === '아니오' ? 'text-rose-600' : 'text-slate-300'}`}>
+                                      {answer.answer === '아니오' ? '✓' : '-'}
+                                    </div>
+                                    <div className="p-3 text-left font-bold text-slate-600">{answer.note || '-'}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {(ownerTab === '전체' || ownerTab === '연차/월차/반차') && (
                   <div className="bg-white rounded-2xl border-2 border-black p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
                     <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1382,7 +1530,7 @@ export default function Home() {
             )}
           </div>
 
-          {isOwnerView ? (
+          {isOwnerView && ownerTab !== '생산체크' ? (
             <div className="space-y-4 px-2">
               {filteredTasks.length === 0 ? (
                 <div className="bg-white p-10 rounded-2xl border-2 border-black text-center font-bold text-slate-400">등록된 항목이 없습니다.</div>
@@ -1462,9 +1610,9 @@ export default function Home() {
                 ))
               )}
             </div>
-          ) : (
+          ) : !isOwnerView ? (
             <div className="bg-white p-10 rounded-2xl border-2 border-black text-center font-bold text-slate-400 mx-2">관리자 인증 후 실시간으로 확인 가능합니다.</div>
-          )}
+          ) : null}
         </div>
       </div>
 
