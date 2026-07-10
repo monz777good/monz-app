@@ -67,7 +67,7 @@ const LEAVE_COUNT_START_DATE_BY_EMPLOYEE: Record<string, string> = {
 const MONTHLY_LEAVE_RULE_BY_EMPLOYEE: Record<string, { baseMonth: string; baseAllowance: number }> = {
   조승: { baseMonth: '2026-07', baseAllowance: 5 },
 }
-const KNOWN_EMPLOYEES = ['이현택', '전창식', '안정은', '조승']
+const KNOWN_EMPLOYEES = ['이현택', '안정은', '전창식', '조승']
 const LEAVE_TYPES = ['연차', '월차', '반차']
 const INSTRUCTION_TYPES = ['업무지시', '업무요청']
 const PRODUCTION_MANUAL_TYPE = '생산매뉴얼'
@@ -451,21 +451,7 @@ export default function Home() {
     }
   }, [tasks, evaluationMode, evaluationMonth, evaluationYear])
 
-  const employeeOptions = useMemo(() => {
-    const names = new Set(KNOWN_EMPLOYEES)
-
-    tasks.forEach((task) => {
-      const userName = normalizeEmployeeName(task.user_name)
-      if (userName && userName !== '사장님') names.add(userName)
-
-      normalizeNameList(task.target_name).forEach((targetName) => {
-        const normalized = normalizeEmployeeName(targetName)
-        if (normalized && normalized !== '전체') names.add(normalized)
-      })
-    })
-
-    return [...names].sort((a, b) => a.localeCompare(b, 'ko'))
-  }, [tasks])
+  const employeeOptions = KNOWN_EMPLOYEES
 
   const productionManualRow = useMemo(() => tasks.find((task) => task.type === PRODUCTION_MANUAL_TYPE), [tasks])
   const productionManualItems = useMemo(() => parseProductionManualItems(productionManualRow?.task_content), [productionManualRow])
@@ -882,6 +868,8 @@ export default function Home() {
 
     return tasks
       .filter((task) => {
+        if (isSystemTaskType(task.type)) return false
+
         const taskDate = getTaskKSTDate(task)
         if (taskDate !== employeeHistoryDate) return false
 
@@ -1588,21 +1576,39 @@ export default function Home() {
               ))}
             </div>
 
-            {isOwnerView && productionSubmissions.length > 0 && (
+            {productionSubmissions.length > 0 && (
               <div className="mt-5 rounded-2xl border-2 border-black bg-white p-4">
                 <div className="mb-3 font-black">최근 생산 체크 기록</div>
-                <div className="space-y-2">
+                <div className="space-y-4">
                   {productionSubmissions.map(({ task, payload }) => (
-                    <div key={task.id} className="rounded-xl border border-slate-300 p-3 text-sm">
-                      <div className="font-black">
-                        {payload?.producer} · {formatKSTDateTime(task.created_at)}
+                    <div key={task.id} className="overflow-hidden rounded-xl border-2 border-black text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-slate-100 p-3 font-black">
+                        <span>생산자: {payload?.producer}</span>
+                        <span className="text-slate-500">{formatKSTDateTime(task.created_at)}</span>
                       </div>
-                      <div className="mt-1 text-slate-600">
-                        {payload?.answers.map((answer) => `${answer.text}: ${answer.answer}${answer.note ? `(${answer.note})` : ''}`).join(' / ')}
+                      <div className="grid grid-cols-[1fr_64px_78px_1fr] bg-slate-900 text-center text-xs font-black text-white">
+                        <div className="p-2 text-left">체크 항목</div>
+                        <div className="p-2">예</div>
+                        <div className="p-2">아니오</div>
+                        <div className="p-2 text-left">비고</div>
                       </div>
+                      {payload?.answers.map((answer) => (
+                        <div key={answer.itemId} className="grid grid-cols-[1fr_64px_78px_1fr] border-t border-slate-300 bg-white text-center">
+                          <div className="p-2 text-left font-bold">{answer.text}</div>
+                          <div className={`p-2 font-black ${answer.answer === '예' ? 'text-emerald-600' : 'text-slate-300'}`}>{answer.answer === '예' ? '✓' : '-'}</div>
+                          <div className={`p-2 font-black ${answer.answer === '아니오' ? 'text-rose-600' : 'text-slate-300'}`}>{answer.answer === '아니오' ? '✓' : '-'}</div>
+                          <div className="p-2 text-left font-bold text-slate-600">{answer.note || '-'}</div>
+                        </div>
+                      ))}
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {productionSubmissions.length === 0 && (
+              <div className="mt-5 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-center font-bold text-slate-400">
+                아직 저장된 생산 체크 기록이 없습니다.
               </div>
             )}
 
