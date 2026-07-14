@@ -11,6 +11,16 @@ type RecipeRow = {
   fields: { label: string; value: string }[]
 }
 
+type RecipeBlock = {
+  startIndex: number
+  endIndex: number
+  startRow: number
+  endRow: number
+  endColumn: string
+  title: string
+  blockRows: string[][]
+}
+
 const DEFAULT_SPREADSHEET_ID = '1wc-TzjMAe3zbK6qdxcwwz6MPGUvPt4nXp2nGiT5g7-8'
 const DEFAULT_SHEET_NAME = '약침처방전 추출개선'
 const DEFAULT_SHEET_GID = '227446664'
@@ -98,25 +108,7 @@ function getColumnName(index: number) {
   return name
 }
 
-function findRecipeBlock(rows: string[][], matchedIndex: number) {
-  let startIndex = matchedIndex
-  for (let index = matchedIndex; index >= Math.max(0, matchedIndex - 8); index -= 1) {
-    const rowText = rows[index].join(' ')
-    if (rowText.includes('상품명') || rowText.includes('제품명') || rowText.includes('약침명')) {
-      startIndex = index
-      break
-    }
-  }
-
-  let endIndex = Math.min(rows.length - 1, startIndex + 35)
-  for (let index = startIndex + 1; index <= Math.min(rows.length - 1, startIndex + 60); index += 1) {
-    const rowText = rows[index].join(' ')
-    if (rowText.includes('상품명') || rowText.includes('제품명') || rowText.includes('약침명')) {
-      endIndex = Math.max(startIndex, index - 1)
-      break
-    }
-  }
-
+function getBlockEndColumn(rows: string[][], startIndex: number, endIndex: number) {
   let maxColumnIndex = 0
   rows.slice(startIndex, endIndex + 1).forEach((row) => {
     row.forEach((value, columnIndex) => {
@@ -124,13 +116,58 @@ function findRecipeBlock(rows: string[][], matchedIndex: number) {
     })
   })
 
-  return {
-    startIndex,
-    endIndex,
-    startRow: startIndex + 1,
-    endRow: endIndex + 1,
-    endColumn: getColumnName(Math.max(6, maxColumnIndex + 2)),
+  return getColumnName(Math.max(6, maxColumnIndex + 2))
+}
+
+function compactLabel(value: string) {
+  return value.replace(/\s/g, '')
+}
+
+function isProductHeaderRow(row: string[]) {
+  return row.some((value) => {
+    const label = compactLabel(value)
+    return label.includes('상품명') || label.includes('제품명')
+  })
+}
+
+function pickProductTitle(row: string[], fallback: string) {
+  const labelIndex = row.findIndex((value) => {
+    const label = compactLabel(value)
+    return label.includes('상품명') || label.includes('제품명')
+  })
+
+  if (labelIndex < 0) return fallback
+
+  for (let columnIndex = labelIndex + 1; columnIndex < row.length; columnIndex += 1) {
+    const value = row[columnIndex].trim()
+    const label = compactLabel(value)
+    if (!value) continue
+    if (label.includes('제조사') || label.includes('효과') || label.includes('제조방법') || label.includes('주의사항')) continue
+    return value
   }
+
+  return fallback
+}
+
+function buildRecipeBlocks(rows: string[][]): RecipeBlock[] {
+  const headerIndexes = rows.map((row, index) => (isProductHeaderRow(row) ? index : -1)).filter((index) => index >= 0)
+
+  return headerIndexes.map((startIndex, blockIndex) => {
+    const nextStartIndex = headerIndexes[blockIndex + 1]
+    const endIndex = nextStartIndex ? nextStartIndex - 1 : rows.length - 1
+    const blockRows = rows.slice(startIndex, endIndex + 1)
+    const title = pickProductTitle(rows[startIndex], pickTitle(blockRows, ''))
+
+    return {
+      startIndex,
+      endIndex,
+      startRow: startIndex + 1,
+      endRow: endIndex + 1,
+      endColumn: getBlockEndColumn(rows, startIndex, endIndex),
+      title,
+      blockRows,
+    }
+  })
 }
 
 function pickTitle(blockRows: string[][], query: string) {
@@ -138,10 +175,6 @@ function pickTitle(blockRows: string[][], query: string) {
   if (exactMatch?.trim()) return exactMatch.trim()
 
   return blockRows.flat().find((value) => value.trim())?.trim() || '이름 없음'
-}
-
-function compactLabel(value: string) {
-  return value.replace(/\s/g, '')
 }
 
 function isManufacturingMethodLabel(value: string) {
@@ -223,23 +256,20 @@ export async function GET(request: Request) {
   const csv = await response.text()
   const rows = parseCsv(csv)
   const needle = query.toLowerCase()
-  const seenRanges = new Set<string>()
 
-  const recipes: RecipeRow[] = rows
-    .map((values, index) => {
-      const haystack = values.join(' ').toLowerCase()
-      if (!haystack.includes(needle)) return null
+  const matchedRecipes = buildRecipeBlocks(rows)
+    .map((block) => {
+      const blockValues = block.blockRows.flat()
+      const titleMatch = block.title.toLowerCase().includes(needle)
+      const contentMatch = blockValues.join(' ').toLowerCase().includes(needle)
+      if (!titleMatch && !contentMatch) return null
 
-      const block = findRecipeBlock(rows, index)
       const rowRange = `A${block.startRow}:${block.endColumn}${block.endRow}`
-      if (seenRanges.has(rowRange)) return null
-      seenRanges.add(rowRange)
-
-      const blockRows = rows.slice(block.startIndex, block.endIndex + 1)
-      const blockValues = blockRows.flat()
       const imageUrls = blockValues.flatMap(extractImageUrls)
-      const methodText = extractManufacturingMethod(blockRows)
-      const fields = blockRows
+      const methodText = extractManufacturingMethod(block.blockRows)
+      if (!methodText) return null
+
+      const fields = block.blockRows
         .flatMap((row, rowIndex) =>
           row.map((value, columnIndex) => ({
             label: `${getColumnName(columnIndex)}${block.startRow + rowIndex}`,
@@ -249,20 +279,25 @@ export async function GET(request: Request) {
         .filter((field) => field.value && extractImageUrls(field.value).length === 0)
 
       const sourceUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${sheetGid}&range=${encodeURIComponent(rowRange)}`
-      const title = pickTitle(blockRows, query)
 
       return {
-        id: `${index}-${title}`,
-        title,
-        imageUrls,
-        sourceUrl,
-        printUrl: '',
-        rowRange,
-        methodText,
-        fields,
+        titleMatch,
+        recipe: {
+          id: `${block.startRow}-${block.title}`,
+          title: block.title,
+          imageUrls,
+          sourceUrl,
+          printUrl: '',
+          rowRange,
+          methodText,
+          fields,
+        },
       }
     })
-    .filter((recipe): recipe is RecipeRow => Boolean(recipe && recipe.methodText))
+    .filter((match): match is { titleMatch: boolean; recipe: RecipeRow } => Boolean(match))
+
+  const hasTitleMatch = matchedRecipes.some((match) => match.titleMatch)
+  const recipes = matchedRecipes.filter((match) => !hasTitleMatch || match.titleMatch).map((match) => match.recipe)
 
   return NextResponse.json({ recipes })
 }
