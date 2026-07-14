@@ -56,6 +56,7 @@ type AcupunctureRecipe = {
   sourceUrl: string
   printUrl: string
   rowRange: string
+  methodText: string
   fields: { label: string; value: string }[]
 }
 
@@ -900,11 +901,6 @@ export default function Home() {
   }
 
   const handlePrintAcupunctureRecipe = (recipe: AcupunctureRecipe) => {
-    if (recipe.printUrl) {
-      window.open(recipe.printUrl, '_blank')
-      return
-    }
-
     const escapeHtml = (value: string) =>
       value
         .replace(/&/g, '&amp;')
@@ -919,12 +915,12 @@ export default function Home() {
       return
     }
 
-    const images = recipe.imageUrls
-      .map((imageUrl) => `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(recipe.title)}" />`)
-      .join('')
-    const rows = recipe.fields
-      .map((field) => `<tr><th>${escapeHtml(field.label)}</th><td>${escapeHtml(field.value).replace(/\n/g, '<br />')}</td></tr>`)
-      .join('')
+    const methodText =
+      recipe.methodText ||
+      recipe.fields
+        .map((field) => field.value)
+        .filter(Boolean)
+        .join('\n')
 
     printWindow.document.write(`
       <!doctype html>
@@ -935,18 +931,18 @@ export default function Home() {
           <style>
             body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
             h1 { font-size: 22px; margin-bottom: 16px; }
-            img { display: block; max-width: 100%; max-height: 92vh; object-fit: contain; margin: 0 0 16px; border: 2px solid #111; }
-            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-            th, td { border: 1px solid #111; padding: 8px; vertical-align: top; text-align: left; }
-            th { width: 180px; background: #f1f5f9; }
+            .paper { border: 2px solid #111; border-radius: 14px; padding: 22px; white-space: pre-wrap; line-height: 1.8; font-size: 17px; font-weight: 700; }
+            .label { display: inline-block; margin-bottom: 12px; padding: 6px 12px; border: 2px solid #111; border-radius: 999px; font-weight: 900; }
             @media print { button { display: none; } body { margin: 12mm; } }
           </style>
         </head>
         <body>
           <button onclick="window.print()" style="padding:10px 16px;margin-bottom:16px;">인쇄</button>
           <h1>${escapeHtml(recipe.title)} 약침 생산 레시피</h1>
-          ${images}
-          ${rows ? `<table>${rows}</table>` : ''}
+          <div class="paper">
+            <div class="label">제조방법</div>
+            <div>${escapeHtml(methodText || '제조방법을 찾지 못했습니다.').replace(/\n/g, '<br />')}</div>
+          </div>
           <script>window.onload = () => window.print();</script>
         </body>
       </html>
@@ -1989,7 +1985,6 @@ export default function Home() {
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-slate-100 p-3 font-black">
                     <span>
                       {recipe.title}
-                      {recipe.rowRange && <span className="ml-2 text-xs text-slate-500">{recipe.rowRange}</span>}
                     </span>
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -2012,41 +2007,14 @@ export default function Home() {
                     </div>
                   </div>
 
-                  {recipe.imageUrls.length > 0 ? (
-                    <div className="grid gap-3 p-4 sm:grid-cols-2">
-                      {recipe.imageUrls.map((imageUrl) => (
-                        <img
-                          key={imageUrl}
-                          src={imageUrl}
-                          alt={recipe.title}
-                          className="max-h-[70vh] w-full rounded-xl border-2 border-black object-contain bg-white"
-                        />
-                      ))}
-                    </div>
-                  ) : recipe.printUrl ? (
-                    <div className="p-4">
-                      <iframe
-                        src={recipe.printUrl}
-                        title={`${recipe.title} 미리보기`}
-                        className="h-[70vh] w-full rounded-xl border-2 border-black bg-white"
-                      />
-                    </div>
-                  ) : (
-                    <div className="p-4 font-bold text-slate-500">이미지 또는 미리보기 주소가 없는 결과입니다.</div>
-                  )}
-
-                  {recipe.fields.length > 0 && (
-                    <div className="overflow-x-auto border-t-2 border-black">
-                      <div className="min-w-[640px]">
-                        {recipe.fields.map((field) => (
-                          <div key={`${recipe.id}-${field.label}`} className="grid grid-cols-[180px_1fr] border-b border-slate-200 last:border-b-0">
-                            <div className="bg-slate-50 p-3 font-black">{field.label}</div>
-                            <div className="whitespace-pre-wrap p-3 font-bold">{field.value}</div>
-                          </div>
-                        ))}
+                  <div className="p-4">
+                    <div className="rounded-xl border-2 border-black bg-white p-5 shadow-inner">
+                      <div className="mb-4 inline-flex rounded-full border-2 border-black bg-slate-100 px-4 py-2 text-sm font-black">제조방법</div>
+                      <div className="min-h-[320px] whitespace-pre-wrap rounded-lg bg-white text-lg font-black leading-9 text-slate-950">
+                        {recipe.methodText || '제조방법을 찾지 못했습니다. 원본 버튼으로 시트 범위를 확인해주세요.'}
                       </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               ))}
             </div>

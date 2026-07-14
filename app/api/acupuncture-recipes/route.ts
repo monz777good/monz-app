@@ -7,6 +7,7 @@ type RecipeRow = {
   sourceUrl: string
   printUrl: string
   rowRange: string
+  methodText: string
   fields: { label: string; value: string }[]
 }
 
@@ -139,6 +140,58 @@ function pickTitle(blockRows: string[][], query: string) {
   return blockRows.flat().find((value) => value.trim())?.trim() || '이름 없음'
 }
 
+function compactLabel(value: string) {
+  return value.replace(/\s/g, '')
+}
+
+function isManufacturingMethodLabel(value: string) {
+  return compactLabel(value).includes('제조방법')
+}
+
+function isRecipeSectionBoundary(row: string[]) {
+  return row.some((value) => {
+    const label = compactLabel(value)
+    return (
+      label.includes('주의사항') ||
+      label.includes('상품명') ||
+      label.includes('제품명') ||
+      label.includes('약침명') ||
+      label.includes('처방코드') ||
+      label === '효과'
+    )
+  })
+}
+
+function extractManufacturingMethod(blockRows: string[][]) {
+  for (let rowIndex = 0; rowIndex < blockRows.length; rowIndex += 1) {
+    const row = blockRows[rowIndex]
+    const labelIndex = row.findIndex(isManufacturingMethodLabel)
+    if (labelIndex < 0) continue
+
+    const parts = row
+      .slice(labelIndex + 1)
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    for (let nextIndex = rowIndex + 1; nextIndex < blockRows.length; nextIndex += 1) {
+      const nextRow = blockRows[nextIndex]
+      if (isRecipeSectionBoundary(nextRow)) break
+
+      const nextParts = nextRow
+        .slice(labelIndex + 1)
+        .map((value) => value.trim())
+        .filter(Boolean)
+
+      if (nextParts.length > 0) parts.push(nextParts.join('\n'))
+    }
+
+    const methodText = parts.join('\n').trim()
+    if (methodText) return methodText
+  }
+
+  return ''
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const query = (searchParams.get('q') || '').trim()
@@ -185,6 +238,7 @@ export async function GET(request: Request) {
       const blockRows = rows.slice(block.startIndex, block.endIndex + 1)
       const blockValues = blockRows.flat()
       const imageUrls = blockValues.flatMap(extractImageUrls)
+      const methodText = extractManufacturingMethod(blockRows)
       const fields = blockRows
         .flatMap((row, rowIndex) =>
           row.map((value, columnIndex) => ({
@@ -195,7 +249,6 @@ export async function GET(request: Request) {
         .filter((field) => field.value && extractImageUrls(field.value).length === 0)
 
       const sourceUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit#gid=${sheetGid}&range=${encodeURIComponent(rowRange)}`
-      const printUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=pdf&gid=${sheetGid}&range=${encodeURIComponent(rowRange)}&size=A4&portrait=false&fitw=true&sheetnames=false&printtitle=false&pagenumbers=false&gridlines=false&fzr=false`
       const title = pickTitle(blockRows, query)
 
       return {
@@ -203,12 +256,13 @@ export async function GET(request: Request) {
         title,
         imageUrls,
         sourceUrl,
-        printUrl,
+        printUrl: '',
         rowRange,
+        methodText,
         fields,
       }
     })
-    .filter(Boolean) as RecipeRow[]
+    .filter((recipe): recipe is RecipeRow => Boolean(recipe && recipe.methodText))
 
   return NextResponse.json({ recipes })
 }
