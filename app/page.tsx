@@ -315,6 +315,12 @@ function addResultCount(count: EvaluationCount, mark?: string | null) {
   if (mark === 'CIRCLE' || mark === 'TRIANGLE' || mark === 'X') count.total += 1
 }
 
+function formatAcupunctureProductionName(title: string) {
+  const trimmed = title.trim()
+  if (!trimmed) return ''
+  return trimmed.includes('약침') ? trimmed : `${trimmed} 약침`
+}
+
 export default function Home() {
   const today = useMemo(() => getKSTDateString(), [])
 
@@ -359,6 +365,10 @@ export default function Home() {
   const [acupunctureRecipeLoading, setAcupunctureRecipeLoading] = useState(false)
   const [acupunctureRecipeError, setAcupunctureRecipeError] = useState('')
   const [acupunctureRecipeResults, setAcupunctureRecipeResults] = useState<AcupunctureRecipe[]>([])
+  const [selectedAcupunctureRecipeTitle, setSelectedAcupunctureRecipeTitle] = useState('')
+  const [agreedAcupunctureRecipeTitle, setAgreedAcupunctureRecipeTitle] = useState('')
+  const [pendingAcupunctureConsentTitle, setPendingAcupunctureConsentTitle] = useState('')
+  const [showAcupunctureConsentPrompt, setShowAcupunctureConsentPrompt] = useState(false)
 
   const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차/반차' | '업무지시' | '업무요청' | '생산체크'>('전체')
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
@@ -481,6 +491,17 @@ export default function Home() {
 
   const productionManualRow = useMemo(() => tasks.find((task) => task.type === PRODUCTION_MANUAL_TYPE), [tasks])
   const productionManualItems = useMemo(() => parseProductionManualItems(productionManualRow?.task_content), [productionManualRow])
+  const productionCheckItems = useMemo(() => {
+    if (!agreedAcupunctureRecipeTitle) return productionManualItems
+
+    return [
+      {
+        id: 'agreed-acupuncture-recipe',
+        text: `${formatAcupunctureProductionName(agreedAcupunctureRecipeTitle)}을 생산하기로 동의하셨는데 맞습니까?`,
+      },
+      ...productionManualItems,
+    ]
+  }, [agreedAcupunctureRecipeTitle, productionManualItems])
   const productionSubmissionRows = useMemo(
     () =>
       tasks
@@ -745,7 +766,7 @@ export default function Home() {
     setManualDraft(productionManualItems.map((item) => item.text).join('\n'))
     setProductionAnswers((prev) => {
       const next = { ...prev }
-      productionManualItems.forEach((item) => {
+      productionCheckItems.forEach((item) => {
         if (!next[item.id]) next[item.id] = { answer: '', note: '' }
       })
       return next
@@ -802,7 +823,7 @@ export default function Home() {
       return
     }
 
-    const missingItem = productionManualItems.find((item) => !productionAnswers[item.id]?.answer)
+    const missingItem = productionCheckItems.find((item) => !productionAnswers[item.id]?.answer)
     if (missingItem) {
       alert('모든 항목에 예/아니오를 체크해주세요.')
       return
@@ -811,7 +832,7 @@ export default function Home() {
     const payload: ProductionCheckPayload = {
       date: productionDate,
       producer,
-      answers: productionManualItems.map((item) => ({
+      answers: productionCheckItems.map((item) => ({
         itemId: item.id,
         text: item.text,
         answer: productionAnswers[item.id].answer as '예' | '아니오',
@@ -864,6 +885,7 @@ export default function Home() {
 
       const recipes = payload.recipes || []
       setAcupunctureRecipeResults(recipes)
+      setSelectedAcupunctureRecipeTitle(recipes[0]?.title || '')
       if (recipes.length === 0) {
         setAcupunctureRecipeError('검색 결과가 없습니다.')
       }
@@ -872,6 +894,79 @@ export default function Home() {
     } finally {
       setAcupunctureRecipeLoading(false)
     }
+  }
+
+  const handlePrintAcupunctureRecipe = (recipe: AcupunctureRecipe) => {
+    const escapeHtml = (value: string) =>
+      value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;')
+
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) {
+      alert('팝업이 차단되어 인쇄창을 열 수 없습니다.')
+      return
+    }
+
+    const images = recipe.imageUrls
+      .map((imageUrl) => `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(recipe.title)}" />`)
+      .join('')
+    const rows = recipe.fields
+      .map((field) => `<tr><th>${escapeHtml(field.label)}</th><td>${escapeHtml(field.value).replace(/\n/g, '<br />')}</td></tr>`)
+      .join('')
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>${escapeHtml(recipe.title)} 약침 생산 레시피</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+            h1 { font-size: 22px; margin-bottom: 16px; }
+            img { display: block; max-width: 100%; max-height: 92vh; object-fit: contain; margin: 0 0 16px; border: 2px solid #111; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border: 1px solid #111; padding: 8px; vertical-align: top; text-align: left; }
+            th { width: 180px; background: #f1f5f9; }
+            @media print { button { display: none; } body { margin: 12mm; } }
+          </style>
+        </head>
+        <body>
+          <button onclick="window.print()" style="padding:10px 16px;margin-bottom:16px;">인쇄</button>
+          <h1>${escapeHtml(recipe.title)} 약침 생산 레시피</h1>
+          ${images}
+          ${rows ? `<table>${rows}</table>` : ''}
+          <script>window.onload = () => window.print();</script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
+  const handleCloseAcupunctureRecipeModal = () => {
+    const consentTitle = selectedAcupunctureRecipeTitle || acupunctureRecipeResults[0]?.title || acupunctureRecipeQuery.trim()
+    if (acupunctureRecipeResults.length > 0 && consentTitle) {
+      setPendingAcupunctureConsentTitle(consentTitle)
+      setShowAcupunctureConsentPrompt(true)
+      return
+    }
+
+    setShowAcupunctureRecipeModal(false)
+  }
+
+  const handleAcupunctureConsentAnswer = (agreed: boolean) => {
+    if (agreed) {
+      setAgreedAcupunctureRecipeTitle(pendingAcupunctureConsentTitle)
+    } else {
+      setAgreedAcupunctureRecipeTitle('')
+    }
+
+    setShowAcupunctureConsentPrompt(false)
+    setPendingAcupunctureConsentTitle('')
+    setShowAcupunctureRecipeModal(false)
   }
 
   const handleLeaveSubmit = async () => {
@@ -1746,7 +1841,7 @@ export default function Home() {
             )}
 
             <div className="space-y-3">
-              {productionManualItems.map((item, index) => (
+              {productionCheckItems.map((item, index) => (
                 <div key={item.id} className="rounded-2xl border-2 border-black bg-slate-50 p-4">
                   <div className="mb-3 font-black">
                     {index + 1}. {item.text}
@@ -1843,7 +1938,7 @@ export default function Home() {
           <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <h2 className="text-xl font-black">💉 약침 생산 레시피</h2>
-              <button onClick={() => setShowAcupunctureRecipeModal(false)} className="rounded-lg bg-slate-200 px-4 py-2">
+              <button onClick={handleCloseAcupunctureRecipeModal} className="rounded-lg bg-slate-200 px-4 py-2">
                 닫기
               </button>
             </div>
@@ -1869,10 +1964,37 @@ export default function Home() {
               </div>
             )}
 
+            {selectedAcupunctureRecipeTitle && (
+              <div className="mt-4 rounded-xl border-2 border-teal-700 bg-teal-50 p-3 text-sm font-black text-teal-800">
+                선택한 약침: {selectedAcupunctureRecipeTitle}
+              </div>
+            )}
+
             <div className="mt-5 space-y-5">
               {acupunctureRecipeResults.map((recipe) => (
-                <div key={recipe.id} className="overflow-hidden rounded-2xl border-2 border-black bg-white">
-                  <div className="border-b-2 border-black bg-slate-100 p-3 font-black">{recipe.title}</div>
+                <div
+                  key={recipe.id}
+                  className={`overflow-hidden rounded-2xl border-2 bg-white ${
+                    selectedAcupunctureRecipeTitle === recipe.title ? 'border-teal-700' : 'border-black'
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-slate-100 p-3 font-black">
+                    <span>{recipe.title}</span>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedAcupunctureRecipeTitle(recipe.title)}
+                        className={`rounded-lg border-2 border-black px-3 py-2 text-sm ${
+                          selectedAcupunctureRecipeTitle === recipe.title ? 'bg-teal-700 text-white' : 'bg-white text-black'
+                        }`}
+                      >
+                        이 약침 생산 선택
+                      </button>
+                      <button type="button" onClick={() => handlePrintAcupunctureRecipe(recipe)} className="rounded-lg border-2 border-black bg-white px-3 py-2 text-sm">
+                        인쇄
+                      </button>
+                    </div>
+                  </div>
 
                   {recipe.imageUrls.length > 0 ? (
                     <div className="grid gap-3 p-4 sm:grid-cols-2">
@@ -1903,6 +2025,25 @@ export default function Home() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAcupunctureConsentPrompt && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[120] p-4 text-black font-bold">
+          <div className="w-full max-w-sm rounded-2xl border-4 border-black bg-white p-6">
+            <h2 className="mb-3 text-xl font-black">생산에 동의하십니까?</h2>
+            <div className="mb-5 whitespace-pre-wrap text-sm font-bold text-slate-700">
+              {formatAcupunctureProductionName(pendingAcupunctureConsentTitle)}을 생산 메뉴얼 체크에 반영할까요?
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => handleAcupunctureConsentAnswer(true)} className="flex-1 rounded-lg bg-teal-700 py-3 text-white">
+                네
+              </button>
+              <button onClick={() => handleAcupunctureConsentAnswer(false)} className="flex-1 rounded-lg bg-slate-200 py-3">
+                아니오
+              </button>
             </div>
           </div>
         </div>
