@@ -49,6 +49,13 @@ type ProductionCheckPayload = {
   answers: ProductionCheckAnswer[]
 }
 
+type AcupunctureRecipe = {
+  id: string
+  title: string
+  imageUrls: string[]
+  fields: { label: string; value: string }[]
+}
+
 const OWNER_PIN = '1919'
 const DEFAULT_ANNUAL_LEAVE_LIMIT = 15
 const ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE: Record<string, number> = {
@@ -326,6 +333,7 @@ export default function Home() {
   const [showEmployeeRequestModal, setShowEmployeeRequestModal] = useState(false)
   const [showLeaveModal, setShowLeaveModal] = useState(false)
   const [showProductionModal, setShowProductionModal] = useState(false)
+  const [showAcupunctureRecipeModal, setShowAcupunctureRecipeModal] = useState(false)
 
   const [orderData, setOrderData] = useState({
     to: '',
@@ -347,6 +355,10 @@ export default function Home() {
   const [productionDate, setProductionDate] = useState(today)
   const [productionAnswers, setProductionAnswers] = useState<Record<string, { answer: '' | '예' | '아니오'; note: string }>>({})
   const [manualDraft, setManualDraft] = useState('')
+  const [acupunctureRecipeQuery, setAcupunctureRecipeQuery] = useState('')
+  const [acupunctureRecipeLoading, setAcupunctureRecipeLoading] = useState(false)
+  const [acupunctureRecipeError, setAcupunctureRecipeError] = useState('')
+  const [acupunctureRecipeResults, setAcupunctureRecipeResults] = useState<AcupunctureRecipe[]>([])
 
   const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차/반차' | '업무지시' | '업무요청' | '생산체크'>('전체')
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
@@ -831,6 +843,37 @@ export default function Home() {
     await fetchTasks()
   }
 
+  const handleAcupunctureRecipeSearch = async () => {
+    const query = acupunctureRecipeQuery.trim()
+    if (!query) {
+      alert('검색할 약침명을 입력해주세요.')
+      return
+    }
+
+    setAcupunctureRecipeLoading(true)
+    setAcupunctureRecipeError('')
+    setAcupunctureRecipeResults([])
+
+    try {
+      const response = await fetch(`/api/acupuncture-recipes?q=${encodeURIComponent(query)}`)
+      const payload = (await response.json()) as { recipes?: AcupunctureRecipe[]; error?: string }
+
+      if (!response.ok) {
+        throw new Error(payload.error || '검색 중 오류가 발생했습니다.')
+      }
+
+      const recipes = payload.recipes || []
+      setAcupunctureRecipeResults(recipes)
+      if (recipes.length === 0) {
+        setAcupunctureRecipeError('검색 결과가 없습니다.')
+      }
+    } catch (error) {
+      setAcupunctureRecipeError(error instanceof Error ? error.message : '검색 중 오류가 발생했습니다.')
+    } finally {
+      setAcupunctureRecipeLoading(false)
+    }
+  }
+
   const handleLeaveSubmit = async () => {
     if (!writerName.trim()) {
       alert('이름부터 입력해주세요!')
@@ -1004,6 +1047,12 @@ export default function Home() {
           className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
         >
           ✅ 생산 메뉴얼 확인체크
+        </button>
+        <button
+          onClick={() => setShowAcupunctureRecipeModal(true)}
+          className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+        >
+          💉 약침 생산 레시피
         </button>
         <button
           onClick={() => setShowLeaveModal(true)}
@@ -1784,6 +1833,76 @@ export default function Home() {
               <button onClick={() => setShowProductionModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">
                 닫기
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAcupunctureRecipeModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
+          <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 className="text-xl font-black">💉 약침 생산 레시피</h2>
+              <button onClick={() => setShowAcupunctureRecipeModal(false)} className="rounded-lg bg-slate-200 px-4 py-2">
+                닫기
+              </button>
+            </div>
+
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                className="flex-1 rounded-lg border-2 border-black p-3"
+                placeholder="약침명 검색"
+                value={acupunctureRecipeQuery}
+                onChange={(e) => setAcupunctureRecipeQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleAcupunctureRecipeSearch()
+                }}
+              />
+              <button onClick={handleAcupunctureRecipeSearch} disabled={acupunctureRecipeLoading} className="rounded-lg bg-teal-700 px-6 py-3 text-white disabled:opacity-60">
+                {acupunctureRecipeLoading ? '검색 중...' : '검색'}
+              </button>
+            </div>
+
+            {acupunctureRecipeError && (
+              <div className="mt-4 rounded-xl border-2 border-amber-400 bg-amber-50 p-4 text-sm font-black text-amber-700">
+                {acupunctureRecipeError}
+              </div>
+            )}
+
+            <div className="mt-5 space-y-5">
+              {acupunctureRecipeResults.map((recipe) => (
+                <div key={recipe.id} className="overflow-hidden rounded-2xl border-2 border-black bg-white">
+                  <div className="border-b-2 border-black bg-slate-100 p-3 font-black">{recipe.title}</div>
+
+                  {recipe.imageUrls.length > 0 ? (
+                    <div className="grid gap-3 p-4 sm:grid-cols-2">
+                      {recipe.imageUrls.map((imageUrl) => (
+                        <img
+                          key={imageUrl}
+                          src={imageUrl}
+                          alt={recipe.title}
+                          className="max-h-[70vh] w-full rounded-xl border-2 border-black object-contain bg-white"
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-4 font-bold text-slate-500">이미지 주소가 없는 결과입니다.</div>
+                  )}
+
+                  {recipe.fields.length > 0 && (
+                    <div className="overflow-x-auto border-t-2 border-black">
+                      <div className="min-w-[640px]">
+                        {recipe.fields.map((field) => (
+                          <div key={`${recipe.id}-${field.label}`} className="grid grid-cols-[180px_1fr] border-b border-slate-200 last:border-b-0">
+                            <div className="bg-slate-50 p-3 font-black">{field.label}</div>
+                            <div className="whitespace-pre-wrap p-3 font-bold">{field.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           </div>
         </div>
