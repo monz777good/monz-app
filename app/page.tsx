@@ -537,7 +537,7 @@ export default function Home() {
     const byEmployee: Record<string, EvaluationCount> = {}
 
     tasks.forEach((task) => {
-      if (task.type !== '업무지시') return
+      if (!isInstructionType(task.type)) return
       if (!task.instruction_result_mark) return
 
       const evaluatedAt = task.instruction_result_at || task.created_at
@@ -1122,9 +1122,18 @@ export default function Home() {
     await fetchTasks()
   }
 
-  const updateInstructionResult = async (taskId: number, nextResult: InstructionResultMark) => {
-    if (!isOwnerView) {
-      alert('사장님 인증 후 평가할 수 있습니다.')
+  const updateInstructionResult = async (task: TaskRow, nextResult: InstructionResultMark) => {
+    const requesterName = normalizeEmployeeName(task.user_name)
+    const myName = normalizeEmployeeName(writerName)
+    const canRequesterEvaluate = task.type === '업무요청' && requesterName === myName
+
+    if (!isOwnerView && !canRequesterEvaluate) {
+      alert('업무요청은 요청한 직원 또는 사장님만 평가할 수 있습니다.')
+      return
+    }
+
+    if (!isOwnerView && canRequesterEvaluate && task.instruction_status !== '완료') {
+      alert('요청받은 직원이 완료 처리한 뒤 평가할 수 있습니다.')
       return
     }
 
@@ -1134,7 +1143,7 @@ export default function Home() {
         instruction_result_mark: nextResult,
         instruction_result_at: new Date().toISOString(),
       })
-      .eq('id', taskId)
+      .eq('id', task.id)
 
     if (error) {
       alert(`평가 저장 실패: ${error.message}`)
@@ -1280,6 +1289,14 @@ export default function Home() {
     return matchesTarget(task.target_name, writerName)
   })
 
+  const myRequestedTasks = tasks
+    .filter((task) => task.type === '업무요청' && normalizeEmployeeName(task.user_name) === normalizeEmployeeName(writerName))
+    .sort((a, b) => {
+      const aTime = new Date(a.created_at || '').getTime()
+      const bTime = new Date(b.created_at || '').getTime()
+      return bTime - aTime
+    })
+
   const weeklyReviewTasks = tasks
     .filter(isWeeklyPlanUnderEmployeeReview)
     .sort((a, b) => {
@@ -1300,7 +1317,7 @@ export default function Home() {
         if (taskDate !== employeeHistoryDate) return false
 
         if (isInstructionType(task.type)) {
-          return matchesTarget(task.target_name, writerName)
+          return matchesTarget(task.target_name, writerName) || normalizeEmployeeName(task.user_name) === myName
         }
 
         return normalizeEmployeeName(task.user_name) === myName
@@ -1434,6 +1451,73 @@ export default function Home() {
                   </div>
                 </div>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {writerName.trim() && myRequestedTasks.length > 0 && (
+        <div className="max-w-5xl mx-auto mb-6">
+          <div className="bg-emerald-50 border-2 border-black rounded-2xl p-5 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+            <div className="text-center text-2xl font-black text-emerald-700 mb-4">🤝 내가 요청한 업무 평가</div>
+            <div className="space-y-4">
+              {myRequestedTasks.map((task) => {
+                const canEvaluate = task.instruction_status === '완료'
+
+                return (
+                  <div key={task.id} className="bg-white border-2 border-black rounded-2xl p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div className="font-black">대상: {task.target_name || '미지정'}</div>
+                      <div className="text-sm font-black text-slate-500">{formatKSTDateTime(task.created_at)}</div>
+                    </div>
+                    <div className="mb-4 whitespace-pre-wrap rounded-xl border-2 border-slate-200 bg-slate-50 p-4 font-bold">{task.task_content}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`rounded-full border border-black px-3 py-1 text-xs font-black ${statusColor(task.instruction_status)}`}>
+                        상태: {task.instruction_status || '대기'}
+                      </span>
+                      <span className={`rounded-full border border-black px-3 py-1 text-xs font-black ${resultColor(task.instruction_result_mark)}`}>
+                        평가: {resultLabel(task.instruction_result_mark)} {task.instruction_result_mark ? `(${resultText(task.instruction_result_mark)})` : ''}
+                      </span>
+                      {!canEvaluate && <span className="text-xs font-black text-slate-500">완료 처리 후 평가 가능</span>}
+                    </div>
+
+                    <div className="mt-4 flex flex-wrap items-center gap-2">
+                      <span className="font-black text-sm mr-2">업무결과 평가</span>
+                      <button
+                        type="button"
+                        disabled={!canEvaluate}
+                        onClick={() => updateInstructionResult(task, 'CIRCLE')}
+                        className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg disabled:opacity-40 ${
+                          task.instruction_result_mark === 'CIRCLE' ? 'bg-emerald-500 text-white' : 'bg-white'
+                        }`}
+                      >
+                        ○
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canEvaluate}
+                        onClick={() => updateInstructionResult(task, 'TRIANGLE')}
+                        className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg disabled:opacity-40 ${
+                          task.instruction_result_mark === 'TRIANGLE' ? 'bg-amber-400 text-black' : 'bg-white'
+                        }`}
+                      >
+                        △
+                      </button>
+                      <button
+                        type="button"
+                        disabled={!canEvaluate}
+                        onClick={() => updateInstructionResult(task, 'X')}
+                        className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg disabled:opacity-40 ${
+                          task.instruction_result_mark === 'X' ? 'bg-rose-500 text-white' : 'bg-white'
+                        }`}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {task.instruction_result_at && <div className="mt-2 text-xs font-bold text-slate-500">평가일시: {formatKSTDateTime(task.instruction_result_at)}</div>}
+                  </div>
+                )
+              })}
             </div>
           </div>
         </div>
@@ -1808,7 +1892,7 @@ export default function Home() {
 
                       {evaluationStats.employeeRows.length === 0 ? (
                         <div className="p-5 text-center font-bold text-slate-400">
-                          {evaluationMode === 'month' ? '이 달에 평가된 업무지시가 없습니다.' : '이 연도에 평가된 업무지시가 없습니다.'}
+                          {evaluationMode === 'month' ? '이 달에 평가된 업무지시/요청이 없습니다.' : '이 연도에 평가된 업무지시/요청이 없습니다.'}
                         </div>
                       ) : (
                         evaluationStats.employeeRows.map((row) => (
@@ -2125,21 +2209,21 @@ export default function Home() {
                           <span className="font-black text-sm mr-2">업무결과 평가</span>
                           <button
                             type="button"
-                            onClick={() => updateInstructionResult(task.id, 'CIRCLE')}
+                            onClick={() => updateInstructionResult(task, 'CIRCLE')}
                             className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'CIRCLE' ? 'bg-emerald-500 text-white' : 'bg-white'}`}
                           >
                             ○
                           </button>
                           <button
                             type="button"
-                            onClick={() => updateInstructionResult(task.id, 'TRIANGLE')}
+                            onClick={() => updateInstructionResult(task, 'TRIANGLE')}
                             className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'TRIANGLE' ? 'bg-amber-400 text-black' : 'bg-white'}`}
                           >
                             △
                           </button>
                           <button
                             type="button"
-                            onClick={() => updateInstructionResult(task.id, 'X')}
+                            onClick={() => updateInstructionResult(task, 'X')}
                             className={`px-4 py-2 rounded-xl border-2 border-black font-black text-lg ${task.instruction_result_mark === 'X' ? 'bg-rose-500 text-white' : 'bg-white'}`}
                           >
                             ✕
