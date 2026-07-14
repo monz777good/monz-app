@@ -53,6 +53,9 @@ type AcupunctureRecipe = {
   id: string
   title: string
   imageUrls: string[]
+  sourceUrl: string
+  printUrl: string
+  rowRange: string
   fields: { label: string; value: string }[]
 }
 
@@ -897,6 +900,11 @@ export default function Home() {
   }
 
   const handlePrintAcupunctureRecipe = (recipe: AcupunctureRecipe) => {
+    if (recipe.printUrl) {
+      window.open(recipe.printUrl, '_blank')
+      return
+    }
+
     const escapeHtml = (value: string) =>
       value
         .replace(/&/g, '&amp;')
@@ -1979,7 +1987,10 @@ export default function Home() {
                   }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-slate-100 p-3 font-black">
-                    <span>{recipe.title}</span>
+                    <span>
+                      {recipe.title}
+                      {recipe.rowRange && <span className="ml-2 text-xs text-slate-500">{recipe.rowRange}</span>}
+                    </span>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -1993,6 +2004,11 @@ export default function Home() {
                       <button type="button" onClick={() => handlePrintAcupunctureRecipe(recipe)} className="rounded-lg border-2 border-black bg-white px-3 py-2 text-sm">
                         인쇄
                       </button>
+                      {recipe.sourceUrl && (
+                        <button type="button" onClick={() => window.open(recipe.sourceUrl, '_blank')} className="rounded-lg border-2 border-black bg-white px-3 py-2 text-sm">
+                          원본
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -2007,8 +2023,16 @@ export default function Home() {
                         />
                       ))}
                     </div>
+                  ) : recipe.printUrl ? (
+                    <div className="p-4">
+                      <iframe
+                        src={recipe.printUrl}
+                        title={`${recipe.title} 미리보기`}
+                        className="h-[70vh] w-full rounded-xl border-2 border-black bg-white"
+                      />
+                    </div>
                   ) : (
-                    <div className="p-4 font-bold text-slate-500">이미지 주소가 없는 결과입니다.</div>
+                    <div className="p-4 font-bold text-slate-500">이미지 또는 미리보기 주소가 없는 결과입니다.</div>
                   )}
 
                   {recipe.fields.length > 0 && (
