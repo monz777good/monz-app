@@ -103,6 +103,7 @@ const INSTRUCTION_TYPES = ['업무지시', '업무요청']
 const WEEKLY_REVIEWING_STATUS = '직원검토중'
 const WEEKLY_REVISION_STATUS = '수정요청'
 const WEEKLY_OWNER_SUBMITTED_STATUS = '사장님제출'
+const WEEKLY_PLAN_EMPLOYEE = '조승'
 const PRODUCTION_MANUAL_TYPE = '생산매뉴얼'
 const PRODUCTION_CHECK_TYPE = '생산체크'
 const DEFAULT_PRODUCTION_MANUAL_ITEMS: ProductionManualItem[] = [
@@ -221,6 +222,10 @@ function getWeeklyPendingReviewers(task: TaskRow) {
 
 function isWeeklyPlanUnderEmployeeReview(task: TaskRow) {
   return task.type === '주간계획' && (task.instruction_status === WEEKLY_REVIEWING_STATUS || task.instruction_status === WEEKLY_REVISION_STATUS)
+}
+
+function isWeeklyPlanEmployee(name?: string | null) {
+  return normalizeEmployeeName(name) === WEEKLY_PLAN_EMPLOYEE
 }
 
 function formatLeaveCount(value: number) {
@@ -742,6 +747,10 @@ export default function Home() {
   const handleWeeklySubmit = async () => {
     if (!writerName.trim()) {
       alert('이름 써주세요!')
+      return
+    }
+    if (!isWeeklyPlanEmployee(writerName)) {
+      alert('주간계획 검토 요청은 조승만 등록할 수 있습니다.')
       return
     }
     if (!weeklyContent.trim()) {
@@ -1298,7 +1307,7 @@ export default function Home() {
     })
 
   const weeklyReviewTasks = tasks
-    .filter(isWeeklyPlanUnderEmployeeReview)
+    .filter((task) => isWeeklyPlanUnderEmployeeReview(task) && isWeeklyPlanEmployee(task.user_name))
     .sort((a, b) => {
       const aTime = new Date(a.created_at || '').getTime()
       const bTime = new Date(b.created_at || '').getTime()
@@ -1312,6 +1321,7 @@ export default function Home() {
     return tasks
       .filter((task) => {
         if (isSystemTaskType(task.type)) return false
+        if (task.type === '주간계획' && !isWeeklyPlanEmployee(task.user_name)) return false
 
         const taskDate = getTaskKSTDate(task)
         if (taskDate !== employeeHistoryDate) return false
@@ -1331,6 +1341,7 @@ export default function Home() {
 
   const filteredTasks = tasks.filter((task) => {
     if (isSystemTaskType(task.type)) return false
+    if (task.type === '주간계획' && !isWeeklyPlanEmployee(task.user_name)) return false
     if (isWeeklyPlanUnderEmployeeReview(task)) return false
 
     if (ownerTab !== '전체') {
@@ -1731,22 +1742,24 @@ export default function Home() {
           </button>
         </div>
 
-        <div className="bg-white p-6 rounded-2xl border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
-          <h2 className="text-xl font-black mb-3 text-indigo-700">📅 주간계획업무</h2>
-          <textarea
-            className="w-full h-32 p-4 border-2 border-black rounded-xl font-bold bg-white text-black"
-            placeholder="직원 검토를 받을 이번 주 계획 업무를 입력하세요..."
-            value={weeklyContent}
-            onChange={(e) => setWeeklyContent(e.target.value)}
-          />
-          <button
-            onClick={handleWeeklySubmit}
-            disabled={loading}
-            className="w-full mt-4 bg-indigo-700 text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60"
-          >
-            {loading ? '등록 중...' : '주간계획 직원 검토 요청'}
-          </button>
-        </div>
+        {isWeeklyPlanEmployee(writerName) && (
+          <div className="bg-white p-6 rounded-2xl border-2 border-black shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+            <h2 className="text-xl font-black mb-3 text-indigo-700">📅 조승 주간계획업무</h2>
+            <textarea
+              className="w-full h-32 p-4 border-2 border-black rounded-xl font-bold bg-white text-black"
+              placeholder="직원 검토를 받을 이번 주 계획 업무를 입력하세요..."
+              value={weeklyContent}
+              onChange={(e) => setWeeklyContent(e.target.value)}
+            />
+            <button
+              onClick={handleWeeklySubmit}
+              disabled={loading}
+              className="w-full mt-4 bg-indigo-700 text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60"
+            >
+              {loading ? '등록 중...' : '주간계획 직원 검토 요청'}
+            </button>
+          </div>
+        )}
 
         <div className="pt-10 border-t-4 border-dashed border-slate-300">
           <div className="flex flex-col gap-4 mb-6 px-2">
