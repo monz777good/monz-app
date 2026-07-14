@@ -104,6 +104,7 @@ const WEEKLY_REVIEWING_STATUS = '직원검토중'
 const WEEKLY_REVISION_STATUS = '수정요청'
 const WEEKLY_OWNER_SUBMITTED_STATUS = '사장님제출'
 const WEEKLY_PLAN_EMPLOYEE = '조승'
+const WEEKLY_PLAN_REVIEWERS = ['전창식', '이현택']
 const PRODUCTION_MANUAL_TYPE = '생산매뉴얼'
 const PRODUCTION_CHECK_TYPE = '생산체크'
 const DEFAULT_PRODUCTION_MANUAL_ITEMS: ProductionManualItem[] = [
@@ -202,7 +203,7 @@ function getWeeklyPlanContent(task: TaskRow) {
 }
 
 function getWeeklyReviewSummary(task: TaskRow) {
-  const reviews = parseWeeklyPlanPayload(task.task_content).reviews
+  const reviews = parseWeeklyPlanPayload(task.task_content).reviews.filter((review) => isWeeklyPlanReviewer(review.name))
   const approvals = reviews.filter((review) => review.decision === '승인')
   const revisionRequests = reviews.filter((review) => review.decision === '수정요청')
 
@@ -215,9 +216,9 @@ function getWeeklyReviewSummary(task: TaskRow) {
 
 function getWeeklyPendingReviewers(task: TaskRow) {
   const writer = normalizeEmployeeName(task.user_name)
-  const reviewedNames = new Set(parseWeeklyPlanPayload(task.task_content).reviews.map((review) => review.name))
+  const reviewedNames = new Set(getWeeklyReviewSummary(task).reviews.map((review) => review.name))
 
-  return KNOWN_EMPLOYEES.filter((name) => name !== writer && !reviewedNames.has(name))
+  return WEEKLY_PLAN_REVIEWERS.filter((name) => name !== writer && !reviewedNames.has(name))
 }
 
 function isWeeklyPlanUnderEmployeeReview(task: TaskRow) {
@@ -226,6 +227,10 @@ function isWeeklyPlanUnderEmployeeReview(task: TaskRow) {
 
 function isWeeklyPlanEmployee(name?: string | null) {
   return normalizeEmployeeName(name) === WEEKLY_PLAN_EMPLOYEE
+}
+
+function isWeeklyPlanReviewer(name?: string | null) {
+  return WEEKLY_PLAN_REVIEWERS.includes(normalizeEmployeeName(name))
 }
 
 function formatLeaveCount(value: number) {
@@ -1193,6 +1198,10 @@ export default function Home() {
       alert('본인이 작성한 주간계획은 다른 직원 검토가 필요합니다.')
       return
     }
+    if (!isWeeklyPlanReviewer(reviewerName)) {
+      alert('주간계획 검토는 전창식, 이현택만 할 수 있습니다.')
+      return
+    }
 
     const note =
       decision === '수정요청'
@@ -1299,7 +1308,12 @@ export default function Home() {
   })
 
   const myRequestedTasks = tasks
-    .filter((task) => task.type === '업무요청' && normalizeEmployeeName(task.user_name) === normalizeEmployeeName(writerName))
+    .filter(
+      (task) =>
+        task.type === '업무요청' &&
+        normalizeEmployeeName(task.user_name) === normalizeEmployeeName(writerName) &&
+        !task.instruction_result_mark
+    )
     .sort((a, b) => {
       const aTime = new Date(a.created_at || '').getTime()
       const bTime = new Date(b.created_at || '').getTime()
@@ -1307,7 +1321,12 @@ export default function Home() {
     })
 
   const weeklyReviewTasks = tasks
-    .filter((task) => isWeeklyPlanUnderEmployeeReview(task) && isWeeklyPlanEmployee(task.user_name))
+    .filter(
+      (task) =>
+        isWeeklyPlanUnderEmployeeReview(task) &&
+        isWeeklyPlanEmployee(task.user_name) &&
+        (isWeeklyPlanEmployee(writerName) || isWeeklyPlanReviewer(writerName))
+    )
     .sort((a, b) => {
       const aTime = new Date(a.created_at || '').getTime()
       const bTime = new Date(b.created_at || '').getTime()
