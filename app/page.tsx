@@ -49,6 +49,22 @@ type ProductionCheckPayload = {
   answers: ProductionCheckAnswer[]
 }
 
+type WeeklyReviewDecision = '승인' | '수정요청'
+
+type WeeklyPlanReview = {
+  name: string
+  decision: WeeklyReviewDecision
+  note?: string
+  reviewedAt: string
+}
+
+type WeeklyPlanPayload = {
+  content: string
+  reviews: WeeklyPlanReview[]
+  submittedToOwnerAt?: string
+  submittedToOwnerBy?: string
+}
+
 type AcupunctureRecipe = {
   id: string
   title: string
@@ -84,6 +100,9 @@ const MONTHLY_LEAVE_RULE_BY_EMPLOYEE: Record<string, { baseMonth: string; baseAl
 const KNOWN_EMPLOYEES = ['이현택', '안정은', '전창식', '조승']
 const LEAVE_TYPES = ['연차', '월차', '반차']
 const INSTRUCTION_TYPES = ['업무지시', '업무요청']
+const WEEKLY_REVIEWING_STATUS = '직원검토중'
+const WEEKLY_REVISION_STATUS = '수정요청'
+const WEEKLY_OWNER_SUBMITTED_STATUS = '사장님제출'
 const PRODUCTION_MANUAL_TYPE = '생산매뉴얼'
 const PRODUCTION_CHECK_TYPE = '생산체크'
 const DEFAULT_PRODUCTION_MANUAL_ITEMS: ProductionManualItem[] = [
@@ -137,6 +156,71 @@ function normalizeEmployeeName(raw?: string | null) {
   if (name.includes('안정은')) return '안정은'
   if (name.includes('조승')) return '조승'
   return name
+}
+
+function parseWeeklyPlanPayload(content?: string | null): WeeklyPlanPayload {
+  if (!content) return { content: '', reviews: [] }
+
+  try {
+    const parsed = JSON.parse(content) as WeeklyPlanPayload
+    if (parsed && typeof parsed === 'object' && typeof parsed.content === 'string') {
+      return {
+        content: parsed.content,
+        reviews: Array.isArray(parsed.reviews)
+          ? parsed.reviews
+              .map((review) => ({
+                name: normalizeEmployeeName(review.name),
+                decision: (review.decision === '수정요청' ? '수정요청' : '승인') as WeeklyReviewDecision,
+                note: String(review.note || '').trim(),
+                reviewedAt: review.reviewedAt || '',
+              }))
+              .filter((review) => review.name)
+          : [],
+        submittedToOwnerAt: parsed.submittedToOwnerAt,
+        submittedToOwnerBy: parsed.submittedToOwnerBy,
+      }
+    }
+  } catch {
+    return { content, reviews: [] }
+  }
+
+  return { content, reviews: [] }
+}
+
+function serializeWeeklyPlanPayload(payload: WeeklyPlanPayload) {
+  return JSON.stringify({
+    content: payload.content,
+    reviews: payload.reviews,
+    submittedToOwnerAt: payload.submittedToOwnerAt,
+    submittedToOwnerBy: payload.submittedToOwnerBy,
+  })
+}
+
+function getWeeklyPlanContent(task: TaskRow) {
+  return parseWeeklyPlanPayload(task.task_content).content
+}
+
+function getWeeklyReviewSummary(task: TaskRow) {
+  const reviews = parseWeeklyPlanPayload(task.task_content).reviews
+  const approvals = reviews.filter((review) => review.decision === '승인')
+  const revisionRequests = reviews.filter((review) => review.decision === '수정요청')
+
+  return {
+    reviews,
+    approvals,
+    revisionRequests,
+  }
+}
+
+function getWeeklyPendingReviewers(task: TaskRow) {
+  const writer = normalizeEmployeeName(task.user_name)
+  const reviewedNames = new Set(parseWeeklyPlanPayload(task.task_content).reviews.map((review) => review.name))
+
+  return KNOWN_EMPLOYEES.filter((name) => name !== writer && !reviewedNames.has(name))
+}
+
+function isWeeklyPlanUnderEmployeeReview(task: TaskRow) {
+  return task.type === '주간계획' && (task.instruction_status === WEEKLY_REVIEWING_STATUS || task.instruction_status === WEEKLY_REVISION_STATUS)
 }
 
 function formatLeaveCount(value: number) {
@@ -263,6 +347,9 @@ function statusColor(status?: string | null) {
   if (status === '완료') return 'bg-emerald-500 text-white'
   if (status === '진행중') return 'bg-amber-400 text-black'
   if (status === '확인') return 'bg-sky-500 text-white'
+  if (status === WEEKLY_OWNER_SUBMITTED_STATUS) return 'bg-indigo-700 text-white'
+  if (status === WEEKLY_REVISION_STATUS) return 'bg-rose-500 text-white'
+  if (status === WEEKLY_REVIEWING_STATUS) return 'bg-indigo-100 text-indigo-900'
   return 'bg-slate-200 text-black'
 }
 
@@ -667,8 +754,14 @@ export default function Home() {
     const { error } = await supabase.from('MONZ').insert([
       {
         user_name: writerName.trim(),
-        task_content: weeklyContent.trim(),
+        task_content: serializeWeeklyPlanPayload({
+          content: weeklyContent.trim(),
+          reviews: [],
+        }),
         type: '주간계획',
+        target_name: '직원검토',
+        instruction_status: WEEKLY_REVIEWING_STATUS,
+        instruction_result_mark: null,
         created_at: new Date().toISOString(),
       },
     ])
@@ -680,7 +773,7 @@ export default function Home() {
       return
     }
 
-    alert('주간계획 등록 완료!')
+    alert('주간계획 직원 검토 요청 완료!\n직원 승인 후 사장님께 제출할 수 있습니다.')
     setWeeklyContent('')
     localStorage.removeItem('monz_weekly_content')
     await fetchTasks()
@@ -1051,11 +1144,149 @@ export default function Home() {
     await fetchTasks()
   }
 
+  const updateWeeklyPlan = async (taskId: number, payload: WeeklyPlanPayload, status: string) => {
+    const { error } = await supabase
+      .from('MONZ')
+      .update({
+        task_content: serializeWeeklyPlanPayload(payload),
+        instruction_status: status,
+        instruction_checked_at: new Date().toISOString(),
+      })
+      .eq('id', taskId)
+
+    if (error) {
+      alert(`주간계획 저장 실패: ${error.message}`)
+      return false
+    }
+
+    await fetchTasks()
+    return true
+  }
+
+  const handleWeeklyReview = async (task: TaskRow, decision: WeeklyReviewDecision) => {
+    const reviewerName = normalizeEmployeeName(writerName)
+    if (!reviewerName) {
+      alert('성함을 먼저 입력해주세요.')
+      return
+    }
+
+    const writer = normalizeEmployeeName(task.user_name)
+    if (reviewerName === writer) {
+      alert('본인이 작성한 주간계획은 다른 직원 검토가 필요합니다.')
+      return
+    }
+
+    const note =
+      decision === '수정요청'
+        ? window.prompt('수정이 필요한 내용을 적어주세요.', '')?.trim()
+        : ''
+
+    if (decision === '수정요청' && !note) {
+      alert('수정요청 사유를 입력해주세요.')
+      return
+    }
+
+    const payload = parseWeeklyPlanPayload(task.task_content)
+    const nextReviews = payload.reviews.filter((review) => review.name !== reviewerName)
+    nextReviews.push({
+      name: reviewerName,
+      decision,
+      note,
+      reviewedAt: new Date().toISOString(),
+    })
+
+    const hasRevisionRequest = nextReviews.some((review) => review.decision === '수정요청')
+    const saved = await updateWeeklyPlan(
+      task.id,
+      {
+        ...payload,
+        reviews: nextReviews,
+      },
+      hasRevisionRequest ? WEEKLY_REVISION_STATUS : WEEKLY_REVIEWING_STATUS
+    )
+
+    if (saved) {
+      alert(decision === '승인' ? '주간계획 승인 완료!' : '수정요청을 남겼습니다.')
+    }
+  }
+
+  const handleSubmitWeeklyToOwner = async (task: TaskRow) => {
+    const myName = normalizeEmployeeName(writerName)
+    const writer = normalizeEmployeeName(task.user_name)
+    if (!myName || myName !== writer) {
+      alert('작성자만 사장님께 제출할 수 있습니다.')
+      return
+    }
+
+    const payload = parseWeeklyPlanPayload(task.task_content)
+    const summary = getWeeklyReviewSummary(task)
+    if (summary.revisionRequests.length > 0) {
+      alert('수정요청이 남아 있어 사장님께 제출할 수 없습니다.\n내용을 수정한 뒤 다시 직원 검토를 요청해주세요.')
+      return
+    }
+    if (summary.approvals.length === 0) {
+      alert('직원 승인 후 사장님께 제출할 수 있습니다.')
+      return
+    }
+
+    const pendingReviewers = getWeeklyPendingReviewers(task)
+    if (
+      pendingReviewers.length > 0 &&
+      !window.confirm(`${pendingReviewers.join(', ')}님 검토가 아직 없습니다.\n그래도 사장님께 제출할까요?`)
+    ) {
+      return
+    }
+
+    const saved = await updateWeeklyPlan(
+      task.id,
+      {
+        ...payload,
+        submittedToOwnerAt: new Date().toISOString(),
+        submittedToOwnerBy: myName,
+      },
+      WEEKLY_OWNER_SUBMITTED_STATUS
+    )
+
+    if (saved) alert('사장님께 주간계획을 제출했습니다.')
+  }
+
+  const handleReviseWeeklyPlan = async (task: TaskRow) => {
+    const myName = normalizeEmployeeName(writerName)
+    const writer = normalizeEmployeeName(task.user_name)
+    if (!myName || myName !== writer) {
+      alert('작성자만 수정할 수 있습니다.')
+      return
+    }
+
+    const payload = parseWeeklyPlanPayload(task.task_content)
+    const nextContent = window.prompt('수정할 주간계획 내용을 입력해주세요.', payload.content)?.trim()
+    if (!nextContent) return
+
+    const saved = await updateWeeklyPlan(
+      task.id,
+      {
+        content: nextContent,
+        reviews: [],
+      },
+      WEEKLY_REVIEWING_STATUS
+    )
+
+    if (saved) alert('수정한 주간계획으로 다시 직원 검토를 요청했습니다.')
+  }
+
   const myInstructions = tasks.filter((task) => {
     if (!isInstructionType(task.type)) return false
     if (task.instruction_status === '완료') return false
     return matchesTarget(task.target_name, writerName)
   })
+
+  const weeklyReviewTasks = tasks
+    .filter(isWeeklyPlanUnderEmployeeReview)
+    .sort((a, b) => {
+      const aTime = new Date(a.created_at || '').getTime()
+      const bTime = new Date(b.created_at || '').getTime()
+      return bTime - aTime
+    })
 
   const myHistoryTasks = useMemo(() => {
     const myName = normalizeEmployeeName(writerName)
@@ -1083,6 +1314,7 @@ export default function Home() {
 
   const filteredTasks = tasks.filter((task) => {
     if (isSystemTaskType(task.type)) return false
+    if (isWeeklyPlanUnderEmployeeReview(task)) return false
 
     if (ownerTab !== '전체') {
       if (ownerTab === '연차/월차/반차') {
@@ -1207,6 +1439,107 @@ export default function Home() {
         </div>
       )}
 
+      {writerName.trim() && weeklyReviewTasks.length > 0 && (
+        <div className="max-w-5xl mx-auto mb-6">
+          <div className="bg-indigo-50 border-2 border-black rounded-2xl p-5 shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+            <div className="text-center text-2xl font-black text-indigo-700 mb-4">📅 주간계획 사전검토</div>
+            <div className="space-y-4">
+              {weeklyReviewTasks.map((task) => {
+                const payload = parseWeeklyPlanPayload(task.task_content)
+                const summary = getWeeklyReviewSummary(task)
+                const myName = normalizeEmployeeName(writerName)
+                const writer = normalizeEmployeeName(task.user_name)
+                const isMine = myName === writer
+                const myReview = summary.reviews.find((review) => review.name === myName)
+                const pendingReviewers = getWeeklyPendingReviewers(task)
+
+                return (
+                  <div key={task.id} className="bg-white border-2 border-black rounded-2xl p-4 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div className="font-black">작성자: {task.user_name}</div>
+                      <div className="text-sm font-black text-slate-500">{formatKSTDateTime(task.created_at)}</div>
+                    </div>
+
+                    <div className="mb-4 whitespace-pre-wrap rounded-xl border-2 border-slate-200 bg-slate-50 p-4 font-bold">{payload.content}</div>
+
+                    <div className="mb-4 flex flex-wrap gap-2">
+                      <span className={`rounded-full border border-black px-3 py-1 text-xs font-black ${statusColor(task.instruction_status)}`}>
+                        상태: {task.instruction_status || WEEKLY_REVIEWING_STATUS}
+                      </span>
+                      <span className="rounded-full border border-black bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">승인 {summary.approvals.length}명</span>
+                      <span className="rounded-full border border-black bg-rose-100 px-3 py-1 text-xs font-black text-rose-700">수정요청 {summary.revisionRequests.length}명</span>
+                      {pendingReviewers.length > 0 && (
+                        <span className="rounded-full border border-black bg-slate-100 px-3 py-1 text-xs font-black text-slate-600">
+                          미검토: {pendingReviewers.join(', ')}
+                        </span>
+                      )}
+                    </div>
+
+                    {summary.reviews.length > 0 && (
+                      <div className="mb-4 space-y-2 rounded-xl border-2 border-slate-200 bg-white p-3">
+                        {summary.reviews.map((review) => (
+                          <div key={`${task.id}-${review.name}`} className="text-sm font-bold">
+                            <span className={review.decision === '승인' ? 'text-emerald-700' : 'text-rose-600'}>
+                              {review.name}: {review.decision}
+                            </span>
+                            {review.note && <span className="text-slate-600"> · {review.note}</span>}
+                            {review.reviewedAt && <span className="text-xs text-slate-400"> · {formatKSTDateTime(review.reviewedAt)}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
+                      {isMine ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleSubmitWeeklyToOwner(task)}
+                            className="rounded-lg border-2 border-black bg-indigo-700 px-4 py-2 text-sm font-black text-white"
+                          >
+                            사장님께 제출
+                          </button>
+                          {summary.revisionRequests.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleReviseWeeklyPlan(task)}
+                              className="rounded-lg border-2 border-black bg-rose-100 px-4 py-2 text-sm font-black text-rose-700"
+                            >
+                              수정해서 다시 검토요청
+                            </button>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleWeeklyReview(task, '승인')}
+                            className={`rounded-lg border-2 border-black px-4 py-2 text-sm font-black ${
+                              myReview?.decision === '승인' ? 'bg-emerald-600 text-white' : 'bg-emerald-100 text-emerald-800'
+                            }`}
+                          >
+                            승인
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleWeeklyReview(task, '수정요청')}
+                            className={`rounded-lg border-2 border-black px-4 py-2 text-sm font-black ${
+                              myReview?.decision === '수정요청' ? 'bg-rose-600 text-white' : 'bg-rose-100 text-rose-700'
+                            }`}
+                          >
+                            수정요청
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="max-w-5xl mx-auto mb-6">
         <input
           className="w-full p-3 border-2 border-black rounded-xl font-bold bg-white text-black"
@@ -1250,6 +1583,11 @@ export default function Home() {
                             </span>
                           </>
                         )}
+                        {task.type === '주간계획' && (
+                          <span className={`rounded-full border border-black px-3 py-1 text-xs font-black ${statusColor(task.instruction_status)}`}>
+                            상태: {task.instruction_status || WEEKLY_OWNER_SUBMITTED_STATUS}
+                          </span>
+                        )}
                         {isLeaveType(task.type) && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
                       </div>
                       <span className="text-sm font-black text-slate-500">{formatKSTDateTime(task.created_at)}</span>
@@ -1266,6 +1604,18 @@ export default function Home() {
                           {parseProductionCheckPayload(task.task_content)
                             ?.answers.map((answer) => `${answer.text}: ${answer.answer}${answer.note ? `(${answer.note})` : ''}`)
                             .join(' / ')}
+                        </div>
+                      </div>
+                    ) : task.type === '주간계획' ? (
+                      <div>
+                        <div className="whitespace-pre-wrap font-bold">{getWeeklyPlanContent(task)}</div>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <span className="rounded-full border border-black bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">
+                            승인 {getWeeklyReviewSummary(task).approvals.length}명
+                          </span>
+                          <span className="rounded-full border border-black bg-rose-100 px-3 py-1 text-xs font-black text-rose-700">
+                            수정요청 {getWeeklyReviewSummary(task).revisionRequests.length}명
+                          </span>
                         </div>
                       </div>
                     ) : (
@@ -1301,7 +1651,7 @@ export default function Home() {
           <h2 className="text-xl font-black mb-3 text-indigo-700">📅 주간계획업무</h2>
           <textarea
             className="w-full h-32 p-4 border-2 border-black rounded-xl font-bold bg-white text-black"
-            placeholder="이번 주 계획 업무를 입력하세요..."
+            placeholder="직원 검토를 받을 이번 주 계획 업무를 입력하세요..."
             value={weeklyContent}
             onChange={(e) => setWeeklyContent(e.target.value)}
           />
@@ -1310,7 +1660,7 @@ export default function Home() {
             disabled={loading}
             className="w-full mt-4 bg-indigo-700 text-white py-4 rounded-xl font-black text-xl shadow-lg disabled:opacity-60"
           >
-            {loading ? '등록 중...' : '주간계획 등록'}
+            {loading ? '등록 중...' : '주간계획 직원 검토 요청'}
           </button>
         </div>
 
@@ -1731,13 +2081,43 @@ export default function Home() {
                           </>
                         )}
                         {isLeaveType(task.type) && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
+                        {task.type === '주간계획' && (
+                          <>
+                            <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(task.instruction_status)}`}>
+                              상태: {task.instruction_status || WEEKLY_OWNER_SUBMITTED_STATUS}
+                            </span>
+                            <span className="text-xs font-black px-2 py-1 rounded-full border border-black bg-emerald-100 text-emerald-800">
+                              승인 {getWeeklyReviewSummary(task).approvals.length}명
+                            </span>
+                            <span className="text-xs font-black px-2 py-1 rounded-full border border-black bg-rose-100 text-rose-700">
+                              수정요청 {getWeeklyReviewSummary(task).revisionRequests.length}명
+                            </span>
+                          </>
+                        )}
                       </div>
                       <span className="font-black text-sm text-right whitespace-nowrap">
                         {task.user_name} | {formatKSTDateTime(task.created_at)}
                       </span>
                     </div>
 
-                    <p className="font-bold whitespace-pre-wrap">{task.task_content}</p>
+                    <p className="font-bold whitespace-pre-wrap">{task.type === '주간계획' ? getWeeklyPlanContent(task) : task.task_content}</p>
+
+                    {task.type === '주간계획' && getWeeklyReviewSummary(task).reviews.length > 0 && (
+                      <div className="mt-4 rounded-2xl border-2 border-black bg-indigo-50 p-3">
+                        <div className="mb-2 text-sm font-black text-indigo-800">직원 사전검토 기록</div>
+                        <div className="space-y-1">
+                          {getWeeklyReviewSummary(task).reviews.map((review) => (
+                            <div key={`${task.id}-owner-${review.name}`} className="text-sm font-bold">
+                              <span className={review.decision === '승인' ? 'text-emerald-700' : 'text-rose-600'}>
+                                {review.name}: {review.decision}
+                              </span>
+                              {review.note && <span className="text-slate-600"> · {review.note}</span>}
+                              {review.reviewedAt && <span className="text-xs text-slate-400"> · {formatKSTDateTime(review.reviewedAt)}</span>}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     {isInstructionType(task.type) && (
                       <div className="mt-4 rounded-2xl border-2 border-black bg-slate-50 p-3">
