@@ -24,6 +24,7 @@ type RecipeBlock = {
 const DEFAULT_SPREADSHEET_ID = '1wc-TzjMAe3zbK6qdxcwwz6MPGUvPt4nXp2nGiT5g7-8'
 const DEFAULT_SHEET_NAME = '약침처방전 추출개선'
 const DEFAULT_SHEET_GID = '227446664'
+const METHOD_VALUE_COLUMN_SPAN = 14
 
 function parseCsv(text: string) {
   const rows: string[][] = []
@@ -195,25 +196,27 @@ function isRecipeSectionBoundary(row: string[]) {
   })
 }
 
+function getNearbyMethodValues(row: string[], labelIndex: number) {
+  const endIndex = Math.min(row.length - 1, labelIndex + METHOD_VALUE_COLUMN_SPAN)
+  return row
+    .slice(labelIndex + 1, endIndex + 1)
+    .map((value) => value.trim())
+    .filter(Boolean)
+}
+
 function extractManufacturingMethod(blockRows: string[][]) {
   for (let rowIndex = 0; rowIndex < blockRows.length; rowIndex += 1) {
     const row = blockRows[rowIndex]
     const labelIndex = row.findIndex(isManufacturingMethodLabel)
     if (labelIndex < 0) continue
 
-    const parts = row
-      .slice(labelIndex + 1)
-      .map((value) => value.trim())
-      .filter(Boolean)
+    const parts = getNearbyMethodValues(row, labelIndex)
 
     for (let nextIndex = rowIndex + 1; nextIndex < blockRows.length; nextIndex += 1) {
       const nextRow = blockRows[nextIndex]
       if (isRecipeSectionBoundary(nextRow)) break
 
-      const nextParts = nextRow
-        .slice(labelIndex + 1)
-        .map((value) => value.trim())
-        .filter(Boolean)
+      const nextParts = getNearbyMethodValues(nextRow, labelIndex)
 
       if (nextParts.length > 0) parts.push(nextParts.join('\n'))
     }
