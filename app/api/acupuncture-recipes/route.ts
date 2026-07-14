@@ -10,7 +10,7 @@ type RecipeRow = {
   fields: { label: string; value: string }[]
 }
 
-const DEFAULT_SPREADSHEET_ID = '1wc-TzjMAe3zbK6qdxewwz6MPGJvPt4nXp2nGiT5g7-8'
+const DEFAULT_SPREADSHEET_ID = '1wc-TzjMAe3zbK6qdxcwwz6MPGUvPt4nXp2nGiT5g7-8'
 const DEFAULT_SHEET_NAME = '약침처방전 추출개선'
 const DEFAULT_SHEET_GID = '227446664'
 
