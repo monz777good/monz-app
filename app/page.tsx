@@ -221,6 +221,10 @@ function getWeeklyPendingReviewers(task: TaskRow) {
   return WEEKLY_PLAN_REVIEWERS.filter((name) => name !== writer && !reviewedNames.has(name))
 }
 
+function areWeeklyReviewsFullyApproved(reviews: WeeklyPlanReview[]) {
+  return WEEKLY_PLAN_REVIEWERS.every((name) => reviews.some((review) => review.name === name && review.decision === '승인'))
+}
+
 function isWeeklyPlanUnderEmployeeReview(task: TaskRow) {
   return task.type === '주간계획' && (task.instruction_status === WEEKLY_REVIEWING_STATUS || task.instruction_status === WEEKLY_REVISION_STATUS)
 }
@@ -470,6 +474,8 @@ export default function Home() {
   const [agreedAcupunctureRecipeTitle, setAgreedAcupunctureRecipeTitle] = useState('')
   const [pendingAcupunctureConsentTitle, setPendingAcupunctureConsentTitle] = useState('')
   const [showAcupunctureConsentPrompt, setShowAcupunctureConsentPrompt] = useState(false)
+  const [weeklyRevisionTask, setWeeklyRevisionTask] = useState<TaskRow | null>(null)
+  const [weeklyRevisionContent, setWeeklyRevisionContent] = useState('')
 
   const [ownerTab, setOwnerTab] = useState<'전체' | '일일업무' | '주간계획' | '연차/월차/반차' | '업무지시' | '업무요청' | '생산체크'>('전체')
   const [dateFilterEnabled, setDateFilterEnabled] = useState(true)
@@ -1223,17 +1229,21 @@ export default function Home() {
     })
 
     const hasRevisionRequest = nextReviews.some((review) => review.decision === '수정요청')
+    const validReviews = nextReviews.filter((review) => isWeeklyPlanReviewer(review.name))
+    const fullyApproved = !hasRevisionRequest && areWeeklyReviewsFullyApproved(validReviews)
     const saved = await updateWeeklyPlan(
       task.id,
       {
         ...payload,
         reviews: nextReviews,
+        submittedToOwnerAt: fullyApproved ? new Date().toISOString() : payload.submittedToOwnerAt,
+        submittedToOwnerBy: fullyApproved ? '직원 전원 승인' : payload.submittedToOwnerBy,
       },
-      hasRevisionRequest ? WEEKLY_REVISION_STATUS : WEEKLY_REVIEWING_STATUS
+      fullyApproved ? WEEKLY_OWNER_SUBMITTED_STATUS : hasRevisionRequest ? WEEKLY_REVISION_STATUS : WEEKLY_REVIEWING_STATUS
     )
 
     if (saved) {
-      alert(decision === '승인' ? '주간계획 승인 완료!' : '수정요청을 남겼습니다.')
+      alert(fullyApproved ? '전창식, 이현택 승인 완료로 주간계획이 기록으로 이동했습니다.' : decision === '승인' ? '주간계획 승인 완료!' : '수정요청을 남겼습니다.')
     }
   }
 
@@ -1257,10 +1267,8 @@ export default function Home() {
     }
 
     const pendingReviewers = getWeeklyPendingReviewers(task)
-    if (
-      pendingReviewers.length > 0 &&
-      !window.confirm(`${pendingReviewers.join(', ')}님 검토가 아직 없습니다.\n그래도 사장님께 제출할까요?`)
-    ) {
+    if (pendingReviewers.length > 0) {
+      alert(`${pendingReviewers.join(', ')}님 승인 후 자동으로 기록 이동됩니다.`)
       return
     }
 
@@ -1286,11 +1294,21 @@ export default function Home() {
     }
 
     const payload = parseWeeklyPlanPayload(task.task_content)
-    const nextContent = window.prompt('수정할 주간계획 내용을 입력해주세요.', payload.content)?.trim()
-    if (!nextContent) return
+    setWeeklyRevisionTask(task)
+    setWeeklyRevisionContent(payload.content)
+  }
+
+  const handleSubmitWeeklyRevision = async () => {
+    if (!weeklyRevisionTask) return
+
+    const nextContent = weeklyRevisionContent.trim()
+    if (!nextContent) {
+      alert('수정할 주간계획 내용을 입력해주세요.')
+      return
+    }
 
     const saved = await updateWeeklyPlan(
-      task.id,
+      weeklyRevisionTask.id,
       {
         content: nextContent,
         reviews: [],
@@ -1298,7 +1316,11 @@ export default function Home() {
       WEEKLY_REVIEWING_STATUS
     )
 
-    if (saved) alert('수정한 주간계획으로 다시 직원 검토를 요청했습니다.')
+    if (saved) {
+      alert('수정한 주간계획으로 다시 직원 검토를 요청했습니다.')
+      setWeeklyRevisionTask(null)
+      setWeeklyRevisionContent('')
+    }
   }
 
   const myInstructions = tasks.filter((task) => {
@@ -1606,13 +1628,6 @@ export default function Home() {
                     <div className="flex flex-wrap gap-2">
                       {isMine ? (
                         <>
-                          <button
-                            type="button"
-                            onClick={() => handleSubmitWeeklyToOwner(task)}
-                            className="rounded-lg border-2 border-black bg-indigo-700 px-4 py-2 text-sm font-black text-white"
-                          >
-                            사장님께 제출
-                          </button>
                           {summary.revisionRequests.length > 0 && (
                             <button
                               type="button"
@@ -1621,6 +1636,11 @@ export default function Home() {
                             >
                               수정해서 다시 검토요청
                             </button>
+                          )}
+                          {summary.revisionRequests.length === 0 && (
+                            <div className="rounded-lg border-2 border-black bg-slate-100 px-4 py-2 text-sm font-black text-slate-700">
+                              전창식, 이현택 승인 완료 후 자동으로 기록 이동
+                            </div>
                           )}
                         </>
                       ) : (
@@ -1839,6 +1859,30 @@ export default function Home() {
                       className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold"
                     >
                       오늘로
+                    </button>
+                    <button
+                      onClick={() => {
+                        const monthText = today.slice(0, 7)
+                        const [yearValue, monthValue] = monthText.split('-').map(Number)
+                        const lastDate = new Date(yearValue, monthValue, 0).getDate()
+                        setFromDate(`${monthText}-01`)
+                        setToDate(`${monthText}-${String(lastDate).padStart(2, '0')}`)
+                        setDateFilterEnabled(true)
+                      }}
+                      className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold"
+                    >
+                      이번달
+                    </button>
+                    <button
+                      onClick={() => {
+                        const yearText = today.slice(0, 4)
+                        setFromDate(`${yearText}-01-01`)
+                        setToDate(`${yearText}-12-31`)
+                        setDateFilterEnabled(true)
+                      }}
+                      className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold"
+                    >
+                      올해
                     </button>
                     <button onClick={() => setDateFilterEnabled(false)} className="px-3 py-2 rounded-lg bg-slate-100 border border-black font-bold">
                       전체보기
@@ -2276,6 +2320,51 @@ export default function Home() {
           ) : null}
         </div>
       </div>
+
+      {weeklyRevisionTask && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
+          <div className="bg-white p-6 rounded-2xl border-4 border-black w-full max-w-3xl">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-xl font-black text-indigo-700">📅 주간계획 수정</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  setWeeklyRevisionTask(null)
+                  setWeeklyRevisionContent('')
+                }}
+                className="rounded-lg bg-slate-200 px-4 py-2"
+              >
+                닫기
+              </button>
+            </div>
+            <textarea
+              className="h-[52vh] w-full rounded-xl border-2 border-black bg-white p-4 font-bold leading-7 text-black"
+              value={weeklyRevisionContent}
+              onChange={(e) => setWeeklyRevisionContent(e.target.value)}
+            />
+            <div className="mt-4 flex gap-2">
+              <button
+                type="button"
+                onClick={handleSubmitWeeklyRevision}
+                disabled={loading}
+                className="flex-1 rounded-lg bg-indigo-700 py-3 text-white disabled:opacity-60"
+              >
+                수정해서 다시 검토요청
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setWeeklyRevisionTask(null)
+                  setWeeklyRevisionContent('')
+                }}
+                className="flex-1 rounded-lg bg-slate-200 py-3"
+              >
+                취소
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showEmployeeRequestModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4 text-black font-bold">
