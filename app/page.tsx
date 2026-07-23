@@ -495,6 +495,7 @@ export default function Home() {
 
   const [producerName, setProducerName] = useState('')
   const [productionDate, setProductionDate] = useState(today)
+  const [productionModalHistoryDate, setProductionModalHistoryDate] = useState(today)
   const [productionAnswers, setProductionAnswers] = useState<Record<string, { answer: '' | '예' | '아니오'; note: string }>>({})
   const [manualDraft, setManualDraft] = useState('')
   const [acupunctureRecipeQuery, setAcupunctureRecipeQuery] = useState('')
@@ -650,7 +651,10 @@ export default function Home() {
         .sort((a, b) => new Date(b.task.created_at || '').getTime() - new Date(a.task.created_at || '').getTime()),
     [tasks]
   )
-  const productionSubmissions = useMemo(() => productionSubmissionRows.slice(0, 8), [productionSubmissionRows])
+  const productionSubmissions = useMemo(
+    () => productionSubmissionRows.filter(({ task }) => getTaskKSTDate(task) === productionModalHistoryDate),
+    [productionSubmissionRows, productionModalHistoryDate]
+  )
   const periodProductionSubmissions = useMemo(
     () =>
       productionSubmissionRows.filter(({ task, payload }) => {
@@ -910,7 +914,9 @@ export default function Home() {
   }
 
   const openProductionModal = () => {
-    setProductionDate(getKSTDateString())
+    const currentDate = getKSTDateString()
+    setProductionDate(currentDate)
+    setProductionModalHistoryDate(currentDate)
     setProducerName((prev) => prev || writerName.trim())
     setManualDraft(productionManualItems.map((item) => item.text).join('\n'))
     setProductionAnswers((prev) => {
@@ -2580,9 +2586,19 @@ export default function Home() {
               ))}
             </div>
 
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-black bg-white p-4">
+              <div className="font-black text-teal-700">날짜별 생산 체크 기록</div>
+              <input
+                type="date"
+                value={productionModalHistoryDate}
+                onChange={(e) => setProductionModalHistoryDate(e.target.value)}
+                className="rounded-lg border-2 border-black px-3 py-2 font-bold"
+              />
+            </div>
+
             {productionSubmissions.length > 0 && (
               <div className="mt-5 rounded-2xl border-2 border-black bg-white p-4">
-                <div className="mb-3 font-black">최근 생산 체크 기록</div>
+                <div className="mb-3 font-black">선택 날짜 생산 체크 기록</div>
                 <div className="space-y-4">
                   {productionSubmissions.map(({ task, payload }) => (
                     <div key={task.id} className="overflow-hidden rounded-xl border-2 border-black text-sm">
@@ -2612,7 +2628,7 @@ export default function Home() {
 
             {productionSubmissions.length === 0 && (
               <div className="mt-5 rounded-2xl border-2 border-dashed border-slate-300 bg-white p-4 text-center font-bold text-slate-400">
-                아직 저장된 생산 체크 기록이 없습니다.
+                선택한 날짜의 생산 체크 기록이 없습니다.
               </div>
             )}
 
