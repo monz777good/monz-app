@@ -24,3 +24,10 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.fixed.inset-0 {
+  top: var(--legacy-fixed-top, 0px);
+  right: var(--legacy-fixed-right, 0px);
+  bottom: var(--legacy-fixed-bottom, 0px);
+  left: var(--legacy-fixed-left, 0px);
+}
