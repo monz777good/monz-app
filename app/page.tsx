@@ -225,8 +225,30 @@ function areWeeklyReviewsFullyApproved(reviews: WeeklyPlanReview[]) {
   return WEEKLY_PLAN_REVIEWERS.every((name) => reviews.some((review) => review.name === name && review.decision === '승인'))
 }
 
+function isWeeklyPlanFullyApproved(task: TaskRow) {
+  const summary = getWeeklyReviewSummary(task)
+  return summary.revisionRequests.length === 0 && areWeeklyReviewsFullyApproved(summary.reviews)
+}
+
+function isWeeklyPlanRecord(task: TaskRow) {
+  return task.type === '주간계획' && (task.instruction_status === WEEKLY_OWNER_SUBMITTED_STATUS || isWeeklyPlanFullyApproved(task))
+}
+
+function getWeeklyPlanRecordTime(task: TaskRow) {
+  const payload = parseWeeklyPlanPayload(task.task_content)
+  if (payload.submittedToOwnerAt) return payload.submittedToOwnerAt
+
+  const reviewedAtTimes = getWeeklyReviewSummary(task).reviews
+    .map((review) => new Date(review.reviewedAt || '').getTime())
+    .filter((time) => !Number.isNaN(time))
+
+  if (reviewedAtTimes.length > 0) return new Date(Math.max(...reviewedAtTimes)).toISOString()
+
+  return task.instruction_checked_at || task.created_at || ''
+}
+
 function isWeeklyPlanUnderEmployeeReview(task: TaskRow) {
-  return task.type === '주간계획' && (task.instruction_status === WEEKLY_REVIEWING_STATUS || task.instruction_status === WEEKLY_REVISION_STATUS)
+  return task.type === '주간계획' && !isWeeklyPlanRecord(task) && (task.instruction_status === WEEKLY_REVIEWING_STATUS || task.instruction_status === WEEKLY_REVISION_STATUS)
 }
 
 function isWeeklyPlanEmployee(name?: string | null) {
@@ -351,10 +373,19 @@ function getTaskKSTDate(task: TaskRow) {
   if (isLeaveType(task.type)) {
     return task.leave_date || null
   }
-  if (!task.created_at) return null
-  const d = new Date(task.created_at)
+  const dateValue = task.type === '주간계획' ? getWeeklyPlanRecordTime(task) : task.created_at
+  if (!dateValue) return null
+  const d = new Date(dateValue)
   const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
   return kst.toISOString().slice(0, 10)
+}
+
+function matchesQuickDateRange(date: string | null, range: 'today' | 'month' | 'year' | 'all', today: string) {
+  if (!date) return false
+  if (range === 'all') return true
+  if (range === 'today') return date === today
+  if (range === 'month') return date.slice(0, 7) === today.slice(0, 7)
+  return date.slice(0, 4) === today.slice(0, 4)
 }
 
 function statusColor(status?: string | null) {
@@ -482,6 +513,7 @@ export default function Home() {
   const [fromDate, setFromDate] = useState(today)
   const [toDate, setToDate] = useState(today)
   const [employeeHistoryDate, setEmployeeHistoryDate] = useState(today)
+  const [weeklyReviewerHistoryRange, setWeeklyReviewerHistoryRange] = useState<'today' | 'month' | 'year' | 'all'>('today')
   const [productionHistoryMode, setProductionHistoryMode] = useState<'year' | 'date'>('date')
   const [productionHistoryYear, setProductionHistoryYear] = useState(today.slice(0, 4))
   const [productionHistoryDate, setProductionHistoryDate] = useState(today)
@@ -1355,6 +1387,23 @@ export default function Home() {
       return bTime - aTime
     })
 
+  const weeklyReviewerHistoryTasks = useMemo(() => {
+    if (!isWeeklyPlanReviewer(writerName)) return []
+
+    return tasks
+      .filter((task) => {
+        if (!isWeeklyPlanRecord(task)) return false
+        if (!isWeeklyPlanEmployee(task.user_name)) return false
+
+        return matchesQuickDateRange(getTaskKSTDate(task), weeklyReviewerHistoryRange, today)
+      })
+      .sort((a, b) => {
+        const aTime = new Date(getWeeklyPlanRecordTime(a)).getTime()
+        const bTime = new Date(getWeeklyPlanRecordTime(b)).getTime()
+        return bTime - aTime
+      })
+  }, [tasks, writerName, weeklyReviewerHistoryRange, today])
+
   const myHistoryTasks = useMemo(() => {
     const myName = normalizeEmployeeName(writerName)
     if (!myName) return []
@@ -1670,6 +1719,63 @@ export default function Home() {
                 )
               })}
             </div>
+          </div>
+        </div>
+      )}
+
+      {writerName.trim() && isWeeklyPlanReviewer(writerName) && (
+        <div className="max-w-5xl mx-auto mb-6">
+          <div className="bg-white border-2 border-black rounded-2xl p-5 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-xl font-black text-indigo-700">📚 주간계획 검토 기록</h2>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { value: 'today', label: '오늘' },
+                  { value: 'month', label: '이번달' },
+                  { value: 'year', label: '올해' },
+                  { value: 'all', label: '전체보기' },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setWeeklyReviewerHistoryRange(option.value as 'today' | 'month' | 'year' | 'all')}
+                    className={`rounded-lg border-2 border-black px-3 py-2 text-sm font-black ${
+                      weeklyReviewerHistoryRange === option.value ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-black'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {weeklyReviewerHistoryTasks.length === 0 ? (
+              <div className="rounded-xl border-2 border-dashed border-slate-300 p-4 text-center font-bold text-slate-400">
+                조건에 맞는 주간계획 기록이 없습니다.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {weeklyReviewerHistoryTasks.map((task) => {
+                  const summary = getWeeklyReviewSummary(task)
+
+                  return (
+                    <div key={`weekly-history-${task.id}`} className="rounded-xl border-2 border-black bg-indigo-50 p-4">
+                      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="font-black">작성자: {task.user_name}</div>
+                        <span className="text-sm font-black text-slate-500">기록일시: {formatKSTDateTime(getWeeklyPlanRecordTime(task))}</span>
+                      </div>
+                      <div className="mb-3 whitespace-pre-wrap rounded-xl border-2 border-slate-200 bg-white p-4 font-bold">{getWeeklyPlanContent(task)}</div>
+                      <div className="flex flex-wrap gap-2">
+                        <span className="rounded-full border border-black bg-indigo-700 px-3 py-1 text-xs font-black text-white">승인 완료</span>
+                        <span className="rounded-full border border-black bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">
+                          승인 {summary.approvals.map((review) => review.name).join(', ')}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}
