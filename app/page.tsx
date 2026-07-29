@@ -380,10 +380,30 @@ function getTaskKSTDate(task: TaskRow) {
   return kst.toISOString().slice(0, 10)
 }
 
-function matchesQuickDateRange(date: string | null, range: 'today' | 'month' | 'year' | 'all', today: string) {
+function getWeekRange(date: string) {
+  const [year, month, day] = date.split('-').map(Number)
+  const base = new Date(Date.UTC(year, month - 1, day))
+  const weekday = base.getUTCDay()
+  const mondayOffset = weekday === 0 ? -6 : 1 - weekday
+  const start = new Date(base)
+  start.setUTCDate(base.getUTCDate() + mondayOffset)
+  const end = new Date(start)
+  end.setUTCDate(start.getUTCDate() + 6)
+
+  return {
+    start: start.toISOString().slice(0, 10),
+    end: end.toISOString().slice(0, 10),
+  }
+}
+
+function matchesQuickDateRange(date: string | null, range: 'today' | 'week' | 'month' | 'year' | 'all', today: string) {
   if (!date) return false
   if (range === 'all') return true
   if (range === 'today') return date === today
+  if (range === 'week') {
+    const { start, end } = getWeekRange(today)
+    return date >= start && date <= end
+  }
   if (range === 'month') return date.slice(0, 7) === today.slice(0, 7)
   return date.slice(0, 4) === today.slice(0, 4)
 }
@@ -514,7 +534,7 @@ export default function Home() {
   const [fromDate, setFromDate] = useState(today)
   const [toDate, setToDate] = useState(today)
   const [employeeHistoryDate, setEmployeeHistoryDate] = useState(today)
-  const [weeklyReviewerHistoryRange, setWeeklyReviewerHistoryRange] = useState<'today' | 'month' | 'year' | 'all'>('today')
+  const [weeklyReviewerHistoryRange, setWeeklyReviewerHistoryRange] = useState<'week' | 'month' | 'year' | 'all'>('week')
   const [productionHistoryMode, setProductionHistoryMode] = useState<'year' | 'date'>('date')
   const [productionHistoryYear, setProductionHistoryYear] = useState(today.slice(0, 4))
   const [productionHistoryDate, setProductionHistoryDate] = useState(today)
@@ -1736,7 +1756,7 @@ export default function Home() {
               <h2 className="text-xl font-black text-indigo-700">📚 주간계획 검토 기록</h2>
               <div className="flex flex-wrap gap-2">
                 {[
-                  { value: 'today', label: '오늘' },
+                  { value: 'week', label: '이번주' },
                   { value: 'month', label: '이번달' },
                   { value: 'year', label: '올해' },
                   { value: 'all', label: '전체보기' },
@@ -1744,7 +1764,7 @@ export default function Home() {
                   <button
                     key={option.value}
                     type="button"
-                    onClick={() => setWeeklyReviewerHistoryRange(option.value as 'today' | 'month' | 'year' | 'all')}
+                    onClick={() => setWeeklyReviewerHistoryRange(option.value as 'week' | 'month' | 'year' | 'all')}
                     className={`rounded-lg border-2 border-black px-3 py-2 text-sm font-black ${
                       weeklyReviewerHistoryRange === option.value ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-black'
                     }`}
