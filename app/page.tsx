@@ -380,6 +380,14 @@ function getTaskKSTDate(task: TaskRow) {
   return kst.toISOString().slice(0, 10)
 }
 
+function getTaskCreatedKSTDate(task: TaskRow) {
+  if (!task.created_at) return null
+  const d = new Date(task.created_at)
+  if (Number.isNaN(d.getTime())) return null
+  const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000)
+  return kst.toISOString().slice(0, 10)
+}
+
 function getWeekRange(date: string) {
   const [year, month, day] = date.split('-').map(Number)
   const base = new Date(Date.UTC(year, month - 1, day))
@@ -1421,11 +1429,11 @@ export default function Home() {
         if (!isWeeklyPlanRecord(task)) return false
         if (!isWeeklyPlanEmployee(task.user_name)) return false
 
-        return matchesQuickDateRange(getTaskKSTDate(task), weeklyReviewerHistoryRange, today)
+        return matchesQuickDateRange(getTaskCreatedKSTDate(task), weeklyReviewerHistoryRange, today)
       })
       .sort((a, b) => {
-        const aTime = new Date(getWeeklyPlanRecordTime(a)).getTime()
-        const bTime = new Date(getWeeklyPlanRecordTime(b)).getTime()
+        const aTime = new Date(a.created_at || '').getTime()
+        const bTime = new Date(b.created_at || '').getTime()
         return bTime - aTime
       })
   }, [tasks, writerName, weeklyReviewerHistoryRange, today])
@@ -1788,7 +1796,7 @@ export default function Home() {
                     <div key={`weekly-history-${task.id}`} className="rounded-xl border-2 border-black bg-indigo-50 p-4">
                       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <div className="font-black">작성자: {task.user_name}</div>
-                        <span className="text-sm font-black text-slate-500">기록일시: {formatKSTDateTime(getWeeklyPlanRecordTime(task))}</span>
+                        <span className="text-sm font-black text-slate-500">등록일시: {formatKSTDateTime(task.created_at)}</span>
                       </div>
                       <div className="mb-3 whitespace-pre-wrap rounded-xl border-2 border-slate-200 bg-white p-4 font-bold">{getWeeklyPlanContent(task)}</div>
                       <div className="flex flex-wrap gap-2">
