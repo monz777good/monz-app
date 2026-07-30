@@ -99,6 +99,9 @@ const MONTHLY_LEAVE_RULE_BY_EMPLOYEE: Record<string, { baseMonth: string; baseAl
 }
 const KNOWN_EMPLOYEES = ['이현택', '안정은', '전창식', '조승']
 const LEAVE_TYPES = ['연차', '월차', '반차']
+const LEAVE_PENDING_STATUS = '승인대기'
+const LEAVE_APPROVED_STATUS = '승인완료'
+const LEAVE_REJECTED_STATUS = '반려'
 const INSTRUCTION_TYPES = ['업무지시', '업무요청']
 const WEEKLY_REVIEWING_STATUS = '직원검토중'
 const WEEKLY_REVISION_STATUS = '수정요청'
@@ -116,6 +119,23 @@ const DEFAULT_PRODUCTION_MANUAL_ITEMS: ProductionManualItem[] = [
 
 function isLeaveType(type: string) {
   return LEAVE_TYPES.includes(type)
+}
+
+function getLeaveApprovalStatus(task: Pick<TaskRow, 'type' | 'instruction_status'>) {
+  if (!isLeaveType(task.type)) return ''
+  if (
+    task.instruction_status === LEAVE_PENDING_STATUS ||
+    task.instruction_status === LEAVE_APPROVED_STATUS ||
+    task.instruction_status === LEAVE_REJECTED_STATUS
+  ) {
+    return task.instruction_status
+  }
+
+  return LEAVE_APPROVED_STATUS
+}
+
+function isLeaveApprovedForCount(task: TaskRow) {
+  return getLeaveApprovalStatus(task) === LEAVE_APPROVED_STATUS
 }
 
 function isInstructionType(type: string) {
@@ -284,6 +304,73 @@ function shouldCountLeaveForEmployee(name: string, taskDate: string) {
   return taskDate >= LEAVE_COUNT_START_DATE_BY_EMPLOYEE[overrideName]
 }
 
+function buildLeaveSummaryRows(tasks: TaskRow[], leaveSummaryYear: string, calendarMonth: string) {
+  const byEmployee = new Map<string, { name: string; priorUsed: number; annualUsed: number; halfUsed: number; monthlyUsed: number }>()
+
+  Object.keys(ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE).forEach((name) => {
+    byEmployee.set(name, {
+      name,
+      priorUsed: getPriorAnnualUsed(name, leaveSummaryYear),
+      annualUsed: 0,
+      halfUsed: 0,
+      monthlyUsed: 0,
+    })
+  })
+
+  tasks.forEach((task) => {
+    if (!isLeaveType(task.type)) return
+    if (!isLeaveApprovedForCount(task)) return
+
+    const name = normalizeEmployeeName(task.user_name)
+    if (!name || name === '사장님') return
+
+    const taskDate = getTaskKSTDate(task)
+    if (!taskDate || taskDate.slice(0, 4) !== leaveSummaryYear) return
+    if (!shouldCountLeaveForEmployee(name, taskDate)) return
+
+    if (!byEmployee.has(name)) {
+      byEmployee.set(name, {
+        name,
+        priorUsed: getPriorAnnualUsed(name, leaveSummaryYear),
+        annualUsed: 0,
+        halfUsed: 0,
+        monthlyUsed: 0,
+      })
+    }
+
+    const row = byEmployee.get(name)!
+    if (task.type === '연차') row.annualUsed += 1
+    if (task.type === '반차') row.halfUsed += 1
+    if (task.type === '월차') row.monthlyUsed += 1
+  })
+
+  return [...byEmployee.values()]
+    .map((row) => {
+      const adjustment = getLeaveUsedAdjustment(row.name, leaveSummaryYear)
+      const annualUsed = row.annualUsed + (adjustment.annualUsed || 0)
+      const halfUsed = row.halfUsed + (adjustment.halfUsed || 0)
+      const monthlyUsed = row.monthlyUsed + (adjustment.monthlyUsed || 0)
+      const annualLimit = getAnnualLeaveLimit(row.name)
+      const monthlyLimit = getMonthlyLeaveLimit(row.name, calendarMonth)
+      const monthlyConsumed = monthlyLimit === null ? monthlyUsed : monthlyUsed + annualUsed + halfUsed * 0.5
+      const annualConsumed = monthlyLimit === null ? row.priorUsed + annualUsed + halfUsed * 0.5 : 0
+      const remaining = monthlyLimit === null ? annualLimit - annualConsumed : monthlyLimit - monthlyConsumed
+
+      return {
+        ...row,
+        annualUsed,
+        halfUsed,
+        monthlyUsed,
+        annualLimit,
+        monthlyLimit,
+        annualConsumed,
+        monthlyConsumed,
+        remaining,
+      }
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+}
+
 function parseProductionManualItems(content?: string | null) {
   if (!content) return DEFAULT_PRODUCTION_MANUAL_ITEMS
 
@@ -423,6 +510,9 @@ function statusColor(status?: string | null) {
   if (status === WEEKLY_OWNER_SUBMITTED_STATUS) return 'bg-indigo-700 text-white'
   if (status === WEEKLY_REVISION_STATUS) return 'bg-rose-500 text-white'
   if (status === WEEKLY_REVIEWING_STATUS) return 'bg-indigo-100 text-indigo-900'
+  if (status === LEAVE_PENDING_STATUS) return 'bg-amber-300 text-black'
+  if (status === LEAVE_APPROVED_STATUS) return 'bg-emerald-500 text-white'
+  if (status === LEAVE_REJECTED_STATUS) return 'bg-rose-500 text-white'
   return 'bg-slate-200 text-black'
 }
 
@@ -718,72 +808,16 @@ export default function Home() {
 
   const leaveSummaryYear = calendarMonth.slice(0, 4)
 
-  const leaveSummaryRows = useMemo(() => {
-    const byEmployee = new Map<string, { name: string; priorUsed: number; annualUsed: number; halfUsed: number; monthlyUsed: number }>()
+  const leaveSummaryRows = useMemo(() => buildLeaveSummaryRows(tasks, leaveSummaryYear, calendarMonth), [tasks, leaveSummaryYear, calendarMonth])
 
-    Object.keys(ANNUAL_LEAVE_LIMIT_BY_EMPLOYEE).forEach((name) => {
-      byEmployee.set(name, {
-        name,
-        priorUsed: getPriorAnnualUsed(name, leaveSummaryYear),
-        annualUsed: 0,
-        halfUsed: 0,
-        monthlyUsed: 0,
-      })
-    })
+  const personalLeaveSummaryRows = useMemo(() => buildLeaveSummaryRows(tasks, today.slice(0, 4), today.slice(0, 7)), [tasks, today])
 
-    tasks.forEach((task) => {
-      if (!isLeaveType(task.type)) return
+  const myLeaveSummary = useMemo(() => {
+    const myName = normalizeEmployeeName(writerName)
+    if (!myName) return null
 
-      const name = normalizeEmployeeName(task.user_name)
-      if (!name || name === '사장님') return
-
-      const taskDate = getTaskKSTDate(task)
-      if (!taskDate || taskDate.slice(0, 4) !== leaveSummaryYear) return
-      if (!shouldCountLeaveForEmployee(name, taskDate)) return
-
-      if (!byEmployee.has(name)) {
-        byEmployee.set(name, {
-          name,
-          priorUsed: getPriorAnnualUsed(name, leaveSummaryYear),
-          annualUsed: 0,
-          halfUsed: 0,
-          monthlyUsed: 0,
-        })
-      }
-
-      const row = byEmployee.get(name)!
-      if (task.type === '연차') row.annualUsed += 1
-      if (task.type === '반차') row.halfUsed += 1
-      if (task.type === '월차') row.monthlyUsed += 1
-    })
-
-    return [...byEmployee.values()]
-      .map((row) => {
-        const adjustment = getLeaveUsedAdjustment(row.name, leaveSummaryYear)
-        const annualUsed = row.annualUsed + (adjustment.annualUsed || 0)
-        const halfUsed = row.halfUsed + (adjustment.halfUsed || 0)
-        const monthlyUsed = row.monthlyUsed + (adjustment.monthlyUsed || 0)
-        const annualLimit = getAnnualLeaveLimit(row.name)
-        const monthlyLimit = getMonthlyLeaveLimit(row.name, calendarMonth)
-        const monthlyConsumed =
-          monthlyLimit === null ? monthlyUsed : monthlyUsed + annualUsed + halfUsed * 0.5
-        const annualConsumed = monthlyLimit === null ? row.priorUsed + annualUsed + halfUsed * 0.5 : 0
-        const remaining = monthlyLimit === null ? annualLimit - annualConsumed : monthlyLimit - monthlyConsumed
-
-        return {
-          ...row,
-          annualUsed,
-          halfUsed,
-          monthlyUsed,
-          annualLimit,
-          monthlyLimit,
-          annualConsumed,
-          monthlyConsumed,
-          remaining,
-        }
-      })
-      .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
-  }, [tasks, leaveSummaryYear, calendarMonth])
+    return personalLeaveSummaryRows.find((row) => normalizeEmployeeName(row.name) === myName) || null
+  }, [personalLeaveSummaryRows, writerName])
 
   const handleDailySubmit = async () => {
     if (!writerName.trim()) {
@@ -1170,6 +1204,8 @@ export default function Home() {
         task_content: leaveData.content.trim(),
         type: leaveData.type,
         leave_date: leaveData.date,
+        target_name: '사장님',
+        instruction_status: LEAVE_PENDING_STATUS,
         created_at: new Date().toISOString(),
       },
     ])
@@ -1181,9 +1217,37 @@ export default function Home() {
       return
     }
 
-    alert('신청 완료!')
+    alert('신청 완료! 사장님 승인 후 연차 현황에 반영됩니다.')
     setLeaveData({ type: '연차', content: '', date: today })
     setShowLeaveModal(false)
+    await fetchTasks()
+  }
+
+  const updateLeaveApprovalStatus = async (task: TaskRow, nextStatus: typeof LEAVE_APPROVED_STATUS | typeof LEAVE_REJECTED_STATUS) => {
+    if (!isOwnerView) {
+      alert('사장님 PIN 인증부터 해주세요.')
+      return
+    }
+
+    const actionText = nextStatus === LEAVE_APPROVED_STATUS ? '승인' : '반려'
+    if (!window.confirm(`${task.user_name}님의 ${task.type} 신청을 ${actionText}하시겠습니까?`)) {
+      return
+    }
+
+    const { error } = await supabase
+      .from('MONZ')
+      .update({
+        target_name: '사장님',
+        instruction_status: nextStatus,
+        instruction_checked_at: new Date().toISOString(),
+      })
+      .eq('id', task.id)
+
+    if (error) {
+      alert(`연차 승인 처리 실패: ${error.message}`)
+      return
+    }
+
     await fetchTasks()
   }
 
@@ -1408,6 +1472,18 @@ export default function Home() {
       return bTime - aTime
     })
 
+  const pendingLeaveRequests = useMemo(
+    () =>
+      tasks
+        .filter((task) => isLeaveType(task.type) && getLeaveApprovalStatus(task) === LEAVE_PENDING_STATUS)
+        .sort((a, b) => {
+          const aTime = new Date(a.created_at || '').getTime()
+          const bTime = new Date(b.created_at || '').getTime()
+          return bTime - aTime
+        }),
+    [tasks]
+  )
+
   const weeklyReviewTasks = tasks
     .filter(
       (task) =>
@@ -1545,9 +1621,17 @@ export default function Home() {
         </button>
       </div>
 
-      <header className="max-w-5xl mx-auto mb-6 bg-teal-700 rounded-[2rem] p-8 text-white text-center shadow-lg">
+      <header className="relative max-w-5xl mx-auto mb-6 bg-teal-700 rounded-[2rem] p-8 text-white text-center shadow-lg">
         <h1 className="text-3xl font-bold text-white">한의N원외탕전</h1>
         <div className="mt-4 text-xl font-black text-amber-300">{today} 업무보고 시스템</div>
+        {myLeaveSummary && (
+          <div className="mt-5 inline-flex flex-col items-center rounded-2xl border-2 border-white/70 bg-white/10 px-4 py-3 text-sm font-black shadow-lg sm:absolute sm:right-6 sm:top-6 sm:mt-0 sm:items-end">
+            <span className="text-xs text-teal-50">{myLeaveSummary.monthlyLimit === null ? '내 연차' : '내 월차'}</span>
+            <span className="text-white">
+              사용 {formatLeaveCount(myLeaveSummary.monthlyLimit === null ? myLeaveSummary.annualConsumed : myLeaveSummary.monthlyConsumed)}회 / 잔여 {formatLeaveCount(myLeaveSummary.remaining)}회
+            </span>
+          </div>
+        )}
       </header>
 
       {writerName.trim() && myInstructions.length > 0 && (
@@ -1862,7 +1946,14 @@ export default function Home() {
                             상태: {task.instruction_status || WEEKLY_OWNER_SUBMITTED_STATUS}
                           </span>
                         )}
-                        {isLeaveType(task.type) && <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>}
+                        {isLeaveType(task.type) && (
+                          <>
+                            <span className="text-xs font-black text-slate-500">신청일: {formatKSTDateOnly(task.leave_date)}</span>
+                            <span className={`text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(getLeaveApprovalStatus(task))}`}>
+                              상태: {getLeaveApprovalStatus(task)}
+                            </span>
+                          </>
+                        )}
                       </div>
                       <span className="text-sm font-black text-slate-500">{formatKSTDateTime(task.created_at)}</span>
                     </div>
@@ -1977,6 +2068,9 @@ export default function Home() {
                       className={`px-4 py-2 rounded-xl border-2 border-black font-bold ${ownerTab === tab ? 'bg-teal-700 text-white' : 'bg-white'}`}
                     >
                       {tab}
+                      {tab === '연차/월차/반차' && pendingLeaveRequests.length > 0 && (
+                        <span className="ml-2 rounded-full bg-amber-300 px-2 py-0.5 text-xs font-black text-black">{pendingLeaveRequests.length}</span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -2252,6 +2346,46 @@ export default function Home() {
                       />
                     </div>
 
+                    {pendingLeaveRequests.length > 0 && (
+                      <div className="mb-5 rounded-2xl border-2 border-black bg-amber-50 p-4">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <h4 className="font-black text-amber-700">🔔 사장님 승인대기 연차 신청</h4>
+                          <span className="rounded-full border border-black bg-amber-300 px-3 py-1 text-xs font-black">{pendingLeaveRequests.length}건</span>
+                        </div>
+                        <div className="space-y-3">
+                          {pendingLeaveRequests.map((task) => (
+                            <div key={`leave-pending-${task.id}`} className="rounded-xl border-2 border-black bg-white p-3">
+                              <div className="flex flex-wrap items-start justify-between gap-3">
+                                <div>
+                                  <div className="font-black">
+                                    {task.user_name} · {task.type} · 신청일 {formatKSTDateOnly(task.leave_date)}
+                                  </div>
+                                  <div className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{task.task_content}</div>
+                                  <div className="mt-1 text-xs font-black text-slate-500">요청시간: {formatKSTDateTime(task.created_at)}</div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => updateLeaveApprovalStatus(task, LEAVE_APPROVED_STATUS)}
+                                    className="rounded-lg border-2 border-black bg-emerald-500 px-4 py-2 text-sm font-black text-white"
+                                  >
+                                    승인
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => updateLeaveApprovalStatus(task, LEAVE_REJECTED_STATUS)}
+                                    className="rounded-lg border-2 border-black bg-rose-500 px-4 py-2 text-sm font-black text-white"
+                                  >
+                                    반려
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="mb-5 overflow-hidden rounded-2xl border-2 border-black">
                       <div className="flex flex-wrap items-center justify-between gap-2 border-b-2 border-black bg-rose-50 p-3">
                         <h4 className="font-black">직원별 연차 현황</h4>
@@ -2331,6 +2465,9 @@ export default function Home() {
                                 <div className="font-black">
                                   [{task.type}] {task.user_name}
                                 </div>
+                                <span className={`mt-2 inline-block text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(getLeaveApprovalStatus(task))}`}>
+                                  상태: {getLeaveApprovalStatus(task)}
+                                </span>
                                 <div className="font-bold mt-1 whitespace-pre-wrap">{task.task_content}</div>
                               </div>
                               <div className="font-black text-sm whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
@@ -2401,6 +2538,25 @@ export default function Home() {
                     </div>
 
                     <p className="font-bold whitespace-pre-wrap">{task.type === '주간계획' ? getWeeklyPlanContent(task) : task.task_content}</p>
+
+                    {isLeaveType(task.type) && getLeaveApprovalStatus(task) === LEAVE_PENDING_STATUS && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => updateLeaveApprovalStatus(task, LEAVE_APPROVED_STATUS)}
+                          className="rounded-lg border-2 border-black bg-emerald-500 px-4 py-2 text-sm font-black text-white"
+                        >
+                          승인
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => updateLeaveApprovalStatus(task, LEAVE_REJECTED_STATUS)}
+                          className="rounded-lg border-2 border-black bg-rose-500 px-4 py-2 text-sm font-black text-white"
+                        >
+                          반려
+                        </button>
+                      </div>
+                    )}
 
                     {task.type === '주간계획' && getWeeklyReviewSummary(task).reviews.length > 0 && (
                       <div className="mt-4 rounded-2xl border-2 border-black bg-indigo-50 p-3">
@@ -2831,7 +2987,7 @@ export default function Home() {
             />
             <div className="flex gap-2">
               <button onClick={handleLeaveSubmit} className="flex-1 bg-rose-500 text-white py-3 rounded-lg">
-                등록
+                신청
               </button>
               <button onClick={() => setShowLeaveModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">
                 취소
