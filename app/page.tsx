@@ -443,6 +443,27 @@ function parseProductionCheckPayload(content?: string | null) {
   return null
 }
 
+function getProductionCheckPayload(task: TaskRow) {
+  const parsed = parseProductionCheckPayload(task.task_content)
+  if (parsed) return parsed
+
+  const content = (task.task_content || '').trim()
+  if (!content) return null
+
+  return {
+    date: getTaskKSTDate(task) || '',
+    producer: normalizeEmployeeName(task.user_name) || task.user_name || '미지정',
+    answers: [
+      {
+        itemId: 'legacy-production-check',
+        text: content,
+        answer: '예' as const,
+        note: '이전 형식 기록',
+      },
+    ],
+  }
+}
+
 function getKSTDateString(date = new Date()) {
   const kst = new Date(date.getTime() + 9 * 60 * 60 * 1000)
   return kst.toISOString().slice(0, 10)
@@ -684,7 +705,7 @@ export default function Home() {
   const [toDate, setToDate] = useState(today)
   const [employeeHistoryDate, setEmployeeHistoryDate] = useState(today)
   const [weeklyReviewerHistoryRange, setWeeklyReviewerHistoryRange] = useState<'week' | 'month' | 'year' | 'all'>('week')
-  const [productionHistoryMode, setProductionHistoryMode] = useState<'year' | 'date'>('date')
+  const [productionHistoryMode, setProductionHistoryMode] = useState<'year' | 'date'>('year')
   const [productionHistoryYear, setProductionHistoryYear] = useState(today.slice(0, 4))
   const [productionHistoryDate, setProductionHistoryDate] = useState(today)
   const [productionHistoryProducer, setProductionHistoryProducer] = useState('전체')
@@ -889,7 +910,7 @@ export default function Home() {
     () =>
       tasks
         .filter((task) => task.type === PRODUCTION_CHECK_TYPE)
-        .map((task) => ({ task, payload: parseProductionCheckPayload(task.task_content) }))
+        .map((task) => ({ task, payload: getProductionCheckPayload(task) }))
         .filter((row) => row.payload)
         .sort((a, b) => new Date(b.task.created_at || '').getTime() - new Date(a.task.created_at || '').getTime()),
     [tasks]
@@ -2122,7 +2143,7 @@ export default function Home() {
                       <div className="whitespace-pre-wrap font-bold">
                         생산 메뉴얼 확인체크 완료
                         <div className="mt-1 text-sm text-slate-600">
-                          {parseProductionCheckPayload(task.task_content)
+                          {getProductionCheckPayload(task)
                             ?.answers.map((answer) => `${answer.text}: ${answer.answer}${answer.note ? `(${answer.note})` : ''}`)
                             .join(' / ')}
                         </div>
