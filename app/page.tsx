@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 const supabase = createClient(
@@ -65,6 +65,13 @@ type WeeklyPlanPayload = {
   submittedToOwnerBy?: string
 }
 
+type LeaveApprovalSignaturePayload = {
+  kind: 'leave-approval-signature'
+  signer: string
+  signedAt: string
+  imageDataUrl: string
+}
+
 type AcupunctureRecipe = {
   id: string
   title: string
@@ -101,7 +108,8 @@ const KNOWN_EMPLOYEES = ['이현택', '안정은', '전창식', '조승']
 const LEAVE_TYPES = ['연차', '월차', '반차']
 const LEAVE_PENDING_STATUS = '승인대기'
 const LEAVE_APPROVED_STATUS = '승인완료'
-const LEAVE_REJECTED_STATUS = '반려'
+const LEAVE_REJECTED_STATUS = '부결'
+const LEGACY_LEAVE_REJECTED_STATUS = '반려'
 const INSTRUCTION_TYPES = ['업무지시', '업무요청']
 const WEEKLY_REVIEWING_STATUS = '직원검토중'
 const WEEKLY_REVISION_STATUS = '수정요청'
@@ -131,11 +139,28 @@ function getLeaveApprovalStatus(task: Pick<TaskRow, 'type' | 'instruction_status
     return task.instruction_status
   }
 
+  if (task.instruction_status === LEGACY_LEAVE_REJECTED_STATUS) return LEAVE_REJECTED_STATUS
+
   return LEAVE_APPROVED_STATUS
 }
 
 function isLeaveApprovedForCount(task: TaskRow) {
   return getLeaveApprovalStatus(task) === LEAVE_APPROVED_STATUS
+}
+
+function parseLeaveApprovalSignature(value?: string | null) {
+  if (!value) return null
+
+  try {
+    const parsed = JSON.parse(value) as LeaveApprovalSignaturePayload
+    if (parsed?.kind === 'leave-approval-signature' && parsed.imageDataUrl?.startsWith('data:image/')) {
+      return parsed
+    }
+  } catch {
+    return null
+  }
+
+  return null
 }
 
 function isInstructionType(type: string) {
@@ -513,6 +538,7 @@ function statusColor(status?: string | null) {
   if (status === LEAVE_PENDING_STATUS) return 'bg-amber-300 text-black'
   if (status === LEAVE_APPROVED_STATUS) return 'bg-emerald-500 text-white'
   if (status === LEAVE_REJECTED_STATUS) return 'bg-rose-500 text-white'
+  if (status === LEGACY_LEAVE_REJECTED_STATUS) return 'bg-rose-500 text-white'
   return 'bg-slate-200 text-black'
 }
 
@@ -575,6 +601,26 @@ function formatAcupunctureProductionName(title: string) {
   return trimmed.includes('약침') ? trimmed : `${trimmed} 약침`
 }
 
+function LeaveApprovalSignatureBox({ task }: { task: Pick<TaskRow, 'instruction_result_mark' | 'instruction_result_at'> }) {
+  const signature = parseLeaveApprovalSignature(task.instruction_result_mark)
+  if (!signature) return null
+
+  return (
+    <div className="mt-3 rounded-xl border-2 border-black bg-emerald-50 p-3">
+      <div className="mb-2 text-xs font-black text-emerald-800">결재칸</div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="h-20 w-44 rounded-lg border-2 border-emerald-700 bg-white p-2">
+          <img src={signature.imageDataUrl} alt="사장님 승인 사인" className="h-full w-full object-contain" />
+        </div>
+        <div className="text-xs font-black text-slate-600">
+          <div>{signature.signer}</div>
+          <div>{formatKSTDateTime(signature.signedAt || task.instruction_result_at)}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Home() {
   const today = useMemo(() => getKSTDateString(), [])
 
@@ -594,6 +640,11 @@ export default function Home() {
   const [showLeaveModal, setShowLeaveModal] = useState(false)
   const [showProductionModal, setShowProductionModal] = useState(false)
   const [showAcupunctureRecipeModal, setShowAcupunctureRecipeModal] = useState(false)
+  const [leaveSignatureTask, setLeaveSignatureTask] = useState<TaskRow | null>(null)
+  const [isDrawingLeaveSignature, setIsDrawingLeaveSignature] = useState(false)
+  const [hasLeaveSignatureStroke, setHasLeaveSignatureStroke] = useState(false)
+  const leaveSignatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const isDrawingLeaveSignatureRef = useRef(false)
 
   const [orderData, setOrderData] = useState({
     to: '',
@@ -698,6 +749,80 @@ export default function Home() {
 
     return () => clearInterval(timer)
   }, [fetchTasks])
+
+  const prepareLeaveSignatureCanvas = useCallback(() => {
+    const canvas = leaveSignatureCanvasRef.current
+    if (!canvas) return
+
+    const context = canvas.getContext('2d')
+    if (!context) return
+
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.strokeStyle = '#0f172a'
+    context.lineWidth = 4
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+  }, [])
+
+  const clearLeaveSignatureCanvas = useCallback(() => {
+    prepareLeaveSignatureCanvas()
+    setHasLeaveSignatureStroke(false)
+    setIsDrawingLeaveSignature(false)
+    isDrawingLeaveSignatureRef.current = false
+  }, [prepareLeaveSignatureCanvas])
+
+  useEffect(() => {
+    if (!leaveSignatureTask) return
+
+    setHasLeaveSignatureStroke(false)
+    setIsDrawingLeaveSignature(false)
+    isDrawingLeaveSignatureRef.current = false
+
+    const frame = window.requestAnimationFrame(prepareLeaveSignatureCanvas)
+    return () => window.cancelAnimationFrame(frame)
+  }, [leaveSignatureTask, prepareLeaveSignatureCanvas])
+
+  const getLeaveSignaturePoint = (clientX: number, clientY: number) => {
+    const canvas = leaveSignatureCanvasRef.current
+    if (!canvas) return null
+
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: ((clientX - rect.left) / rect.width) * canvas.width,
+      y: ((clientY - rect.top) / rect.height) * canvas.height,
+    }
+  }
+
+  const startLeaveSignatureDraw = (clientX: number, clientY: number) => {
+    const canvas = leaveSignatureCanvasRef.current
+    const point = getLeaveSignaturePoint(clientX, clientY)
+    const context = canvas?.getContext('2d')
+    if (!point || !context) return
+
+    context.beginPath()
+    context.moveTo(point.x, point.y)
+    isDrawingLeaveSignatureRef.current = true
+    setIsDrawingLeaveSignature(true)
+    setHasLeaveSignatureStroke(true)
+  }
+
+  const moveLeaveSignatureDraw = (clientX: number, clientY: number) => {
+    if (!isDrawingLeaveSignatureRef.current) return
+
+    const canvas = leaveSignatureCanvasRef.current
+    const point = getLeaveSignaturePoint(clientX, clientY)
+    const context = canvas?.getContext('2d')
+    if (!point || !context) return
+
+    context.lineTo(point.x, point.y)
+    context.stroke()
+  }
+
+  const endLeaveSignatureDraw = () => {
+    isDrawingLeaveSignatureRef.current = false
+    setIsDrawingLeaveSignature(false)
+  }
 
   const evaluationStats = useMemo(() => {
     const total = emptyEvaluationCount()
@@ -1223,15 +1348,19 @@ export default function Home() {
     await fetchTasks()
   }
 
-  const updateLeaveApprovalStatus = async (task: TaskRow, nextStatus: typeof LEAVE_APPROVED_STATUS | typeof LEAVE_REJECTED_STATUS) => {
+  const updateLeaveApprovalStatus = async (
+    task: TaskRow,
+    nextStatus: typeof LEAVE_APPROVED_STATUS | typeof LEAVE_REJECTED_STATUS,
+    signatureImageDataUrl?: string
+  ) => {
     if (!isOwnerView) {
       alert('사장님 PIN 인증부터 해주세요.')
-      return
+      return false
     }
 
-    const actionText = nextStatus === LEAVE_APPROVED_STATUS ? '승인' : '반려'
+    const actionText = nextStatus === LEAVE_APPROVED_STATUS ? '승인' : '부결'
     if (!window.confirm(`${task.user_name}님의 ${task.type} 신청을 ${actionText}하시겠습니까?`)) {
-      return
+      return false
     }
 
     const { error } = await supabase
@@ -1240,15 +1369,42 @@ export default function Home() {
         target_name: '사장님',
         instruction_status: nextStatus,
         instruction_checked_at: new Date().toISOString(),
+        instruction_result_mark:
+          nextStatus === LEAVE_APPROVED_STATUS && signatureImageDataUrl
+            ? JSON.stringify({
+                kind: 'leave-approval-signature',
+                signer: '사장님',
+                signedAt: new Date().toISOString(),
+                imageDataUrl: signatureImageDataUrl,
+              } satisfies LeaveApprovalSignaturePayload)
+            : null,
+        instruction_result_at: nextStatus === LEAVE_APPROVED_STATUS ? new Date().toISOString() : null,
       })
       .eq('id', task.id)
 
     if (error) {
       alert(`연차 승인 처리 실패: ${error.message}`)
-      return
+      return false
     }
 
     await fetchTasks()
+    return true
+  }
+
+  const approveLeaveWithSignature = async () => {
+    const canvas = leaveSignatureCanvasRef.current
+    if (!leaveSignatureTask || !canvas) return
+
+    if (!hasLeaveSignatureStroke) {
+      alert('결재칸에 들어갈 사인을 작성해주세요.')
+      return
+    }
+
+    const saved = await updateLeaveApprovalStatus(leaveSignatureTask, LEAVE_APPROVED_STATUS, canvas.toDataURL('image/png'))
+    if (saved) {
+      setLeaveSignatureTask(null)
+      clearLeaveSignatureCanvas()
+    }
   }
 
   const updateInstructionStatus = async (taskId: number, nextStatus: '확인' | '진행중' | '완료') => {
@@ -2366,7 +2522,7 @@ export default function Home() {
                                 <div className="flex gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => updateLeaveApprovalStatus(task, LEAVE_APPROVED_STATUS)}
+                                    onClick={() => setLeaveSignatureTask(task)}
                                     className="rounded-lg border-2 border-black bg-emerald-500 px-4 py-2 text-sm font-black text-white"
                                   >
                                     승인
@@ -2376,7 +2532,7 @@ export default function Home() {
                                     onClick={() => updateLeaveApprovalStatus(task, LEAVE_REJECTED_STATUS)}
                                     className="rounded-lg border-2 border-black bg-rose-500 px-4 py-2 text-sm font-black text-white"
                                   >
-                                    반려
+                                    부결
                                   </button>
                                 </div>
                               </div>
@@ -2469,6 +2625,7 @@ export default function Home() {
                                   상태: {getLeaveApprovalStatus(task)}
                                 </span>
                                 <div className="font-bold mt-1 whitespace-pre-wrap">{task.task_content}</div>
+                                <LeaveApprovalSignatureBox task={task} />
                               </div>
                               <div className="font-black text-sm whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
                             </div>
@@ -2543,7 +2700,7 @@ export default function Home() {
                       <div className="mt-4 flex flex-wrap gap-2">
                         <button
                           type="button"
-                          onClick={() => updateLeaveApprovalStatus(task, LEAVE_APPROVED_STATUS)}
+                          onClick={() => setLeaveSignatureTask(task)}
                           className="rounded-lg border-2 border-black bg-emerald-500 px-4 py-2 text-sm font-black text-white"
                         >
                           승인
@@ -2553,10 +2710,12 @@ export default function Home() {
                           onClick={() => updateLeaveApprovalStatus(task, LEAVE_REJECTED_STATUS)}
                           className="rounded-lg border-2 border-black bg-rose-500 px-4 py-2 text-sm font-black text-white"
                         >
-                          반려
+                          부결
                         </button>
                       </div>
                     )}
+
+                    {isLeaveType(task.type) && <LeaveApprovalSignatureBox task={task} />}
 
                     {task.type === '주간계획' && getWeeklyReviewSummary(task).reviews.length > 0 && (
                       <div className="mt-4 rounded-2xl border-2 border-black bg-indigo-50 p-3">
@@ -2954,6 +3113,73 @@ export default function Home() {
               </button>
               <button onClick={() => setShowOrderModal(false)} className="flex-1 bg-slate-200 py-3 rounded-lg">
                 닫기
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {leaveSignatureTask && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4 text-black font-bold">
+          <div className="w-full max-w-xl rounded-2xl border-4 border-black bg-white p-5">
+            <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-black text-emerald-700">✍️ 연차 승인 사인</h2>
+                <div className="mt-1 text-sm font-black text-slate-600">
+                  {leaveSignatureTask.user_name} · {leaveSignatureTask.type} · 신청일 {formatKSTDateOnly(leaveSignatureTask.leave_date)}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setLeaveSignatureTask(null)
+                  clearLeaveSignatureCanvas()
+                }}
+                className="rounded-lg bg-slate-200 px-4 py-2 font-black"
+              >
+                닫기
+              </button>
+            </div>
+
+            <div className="mb-4 rounded-xl border-2 border-black bg-slate-50 p-3">
+              <div className="text-xs font-black text-slate-500">사유</div>
+              <div className="mt-1 whitespace-pre-wrap">{leaveSignatureTask.task_content}</div>
+            </div>
+
+            <div className="overflow-hidden rounded-xl border-2 border-black bg-white">
+              <div className="flex items-center justify-between border-b-2 border-black bg-emerald-50 px-3 py-2">
+                <span className="font-black">결재칸</span>
+                <span className="text-xs font-black text-slate-500">{isDrawingLeaveSignature ? '서명 중' : hasLeaveSignatureStroke ? '서명 입력됨' : '서명 대기'}</span>
+              </div>
+              <canvas
+                ref={leaveSignatureCanvasRef}
+                width={700}
+                height={260}
+                className="h-48 w-full touch-none bg-white"
+                onMouseDown={(event) => startLeaveSignatureDraw(event.clientX, event.clientY)}
+                onMouseMove={(event) => moveLeaveSignatureDraw(event.clientX, event.clientY)}
+                onMouseUp={endLeaveSignatureDraw}
+                onMouseLeave={endLeaveSignatureDraw}
+                onTouchStart={(event) => {
+                  event.preventDefault()
+                  const touch = event.touches[0]
+                  if (touch) startLeaveSignatureDraw(touch.clientX, touch.clientY)
+                }}
+                onTouchMove={(event) => {
+                  event.preventDefault()
+                  const touch = event.touches[0]
+                  if (touch) moveLeaveSignatureDraw(touch.clientX, touch.clientY)
+                }}
+                onTouchEnd={endLeaveSignatureDraw}
+              />
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button type="button" onClick={clearLeaveSignatureCanvas} className="flex-1 rounded-lg border-2 border-black bg-slate-100 py-3 font-black">
+                지우기
+              </button>
+              <button type="button" onClick={approveLeaveWithSignature} className="flex-[2] rounded-lg border-2 border-black bg-emerald-600 py-3 font-black text-white">
+                사인 저장 후 승인
               </button>
             </div>
           </div>
