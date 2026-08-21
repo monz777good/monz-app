@@ -82,6 +82,24 @@ type LeaveRequestPayload = {
   }
 }
 
+type LeaveBalanceSnapshot = {
+  employeeName: string
+  annualTotal: number
+  annualUsed: number
+  annualRemaining: number
+  monthlyTotal: number | null
+  monthlyUsed: number
+  monthlyRemaining: number | null
+  limit: number
+  basisLabel: string
+  currentUsed: number
+  currentRemaining: number
+  requestConsumption: number
+  nextUsed: number
+  nextRemaining: number
+  requestSequence: number
+}
+
 type AcupunctureRecipe = {
   id: string
   title: string
@@ -471,6 +489,45 @@ function getLeaveRequestSequence(tasks: TaskRow[], task: TaskRow) {
   return index >= 0 ? index + 1 : sameYearRequests.length + 1
 }
 
+function getLeaveBalanceSnapshot(tasks: TaskRow[], task: TaskRow): LeaveBalanceSnapshot | null {
+  const employeeName = normalizeEmployeeName(task.user_name)
+  const requestDate = getTaskKSTDate(task)
+  if (!employeeName || !requestDate) return null
+
+  const summaryRow =
+    buildLeaveSummaryRows(tasks, requestDate.slice(0, 4), requestDate.slice(0, 7)).find((row) => normalizeEmployeeName(row.name) === employeeName) || null
+  if (!summaryRow) return null
+
+  const monthlyTotal = summaryRow.monthlyLimit
+  const annualUsed = summaryRow.annualConsumed
+  const annualRemaining = summaryRow.annualLimit - summaryRow.annualConsumed
+  const monthlyUsed = monthlyTotal === null ? summaryRow.monthlyUsed : summaryRow.monthlyConsumed
+  const monthlyRemaining = monthlyTotal === null ? null : monthlyTotal - summaryRow.monthlyConsumed
+  const currentUsed = monthlyTotal === null ? annualUsed : monthlyUsed
+  const currentRemaining = monthlyTotal === null ? annualRemaining : monthlyRemaining ?? 0
+  const requestConsumption = getLeaveRequestConsumption(task.type, monthlyTotal)
+  const nextUsed = currentUsed + requestConsumption
+  const nextRemaining = currentRemaining - requestConsumption
+
+  return {
+    employeeName,
+    annualTotal: summaryRow.annualLimit,
+    annualUsed,
+    annualRemaining,
+    monthlyTotal,
+    monthlyUsed,
+    monthlyRemaining,
+    limit: monthlyTotal ?? summaryRow.annualLimit,
+    basisLabel: monthlyTotal === null ? '연차 기준' : '월차 기준',
+    currentUsed,
+    currentRemaining,
+    requestConsumption,
+    nextUsed,
+    nextRemaining,
+    requestSequence: getLeaveRequestSequence(tasks, task),
+  }
+}
+
 function parseProductionManualItems(content?: string | null) {
   if (!content) return DEFAULT_PRODUCTION_MANUAL_ITEMS
 
@@ -697,20 +754,40 @@ function formatAcupunctureProductionName(title: string) {
   return trimmed.includes('약침') ? trimmed : `${trimmed} 약침`
 }
 
-function LeaveApprovalSignatureBox({ task }: { task: Pick<TaskRow, 'instruction_result_mark' | 'instruction_result_at'> }) {
+function LeaveApprovalSignatureBox({ task }: { task: Pick<TaskRow, 'instruction_result_mark' | 'instruction_result_at' | 'task_content'> }) {
   const signature = parseLeaveApprovalSignature(task.instruction_result_mark)
+  const requesterSignature = getLeaveRequesterSignature(task)
   if (!signature) return null
 
   return (
     <div className="mt-3 rounded-xl border-2 border-black bg-emerald-50 p-3">
       <div className="mb-2 text-xs font-black text-emerald-800">결재칸</div>
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="h-20 w-44 rounded-lg border-2 border-emerald-700 bg-white p-2">
-          <img src={signature.imageDataUrl} alt="사장님 승인 사인" className="h-full w-full object-contain" />
-        </div>
-        <div className="text-xs font-black text-slate-600">
-          <div>{signature.signer}</div>
-          <div>{formatKSTDateTime(signature.signedAt || task.instruction_result_at)}</div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {requesterSignature && (
+          <div className="rounded-lg border-2 border-rose-700 bg-white p-2">
+            <div className="mb-1 text-[11px] font-black text-rose-700">직원 사인</div>
+            <div className="flex items-end gap-2">
+              <div className="h-16 flex-1">
+                <img src={requesterSignature.imageDataUrl} alt="직원 신청 사인" className="h-full w-full object-contain" />
+              </div>
+              <div className="text-[11px] font-black text-slate-600">
+                <div>{requesterSignature.signer || '신청 직원'}</div>
+                <div>{formatKSTDateTime(requesterSignature.signedAt)}</div>
+              </div>
+            </div>
+          </div>
+        )}
+        <div className="rounded-lg border-2 border-emerald-700 bg-white p-2">
+          <div className="mb-1 text-[11px] font-black text-emerald-800">사장님 사인</div>
+          <div className="flex items-end gap-2">
+            <div className="h-16 flex-1">
+              <img src={signature.imageDataUrl} alt="사장님 승인 사인" className="h-full w-full object-contain" />
+            </div>
+            <div className="text-[11px] font-black text-slate-600">
+              <div>{signature.signer}</div>
+              <div>{formatKSTDateTime(signature.signedAt || task.instruction_result_at)}</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -2748,35 +2825,68 @@ export default function Home() {
                           <span className="rounded-full border border-black bg-amber-300 px-3 py-1 text-xs font-black">{pendingLeaveRequests.length}건</span>
                         </div>
                         <div className="space-y-3">
-                          {pendingLeaveRequests.map((task) => (
-                            <div key={`leave-pending-${task.id}`} className="rounded-xl border-2 border-black bg-white p-3">
-                              <div className="flex flex-wrap items-start justify-between gap-3">
-                                <div>
-                                  <div className="font-black">
-                                    {task.user_name} · {task.type} · 신청일 {formatKSTDateOnly(task.leave_date)}
+                          {pendingLeaveRequests.map((task) => {
+                            const balance = getLeaveBalanceSnapshot(tasks, task)
+
+                            return (
+                              <div key={`leave-pending-${task.id}`} className="rounded-xl border-2 border-black bg-white p-3">
+                                <div className="flex flex-wrap items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-black">
+                                      {task.user_name} · {task.type} · 신청일 {formatKSTDateOnly(task.leave_date)}
+                                    </div>
+                                    <div className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{getLeaveReason(task)}</div>
+                                    {balance && (
+                                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-black sm:grid-cols-4">
+                                        <div className="rounded-lg border border-black bg-rose-50 p-2">
+                                          <div className="text-slate-500">총 연차</div>
+                                          <div>{formatLeaveCount(balance.annualTotal)}회</div>
+                                        </div>
+                                        <div className="rounded-lg border border-black bg-white p-2">
+                                          <div className="text-slate-500">사용/잔여 연차</div>
+                                          <div>
+                                            {formatLeaveCount(balance.annualUsed)}회 / {formatLeaveCount(balance.annualRemaining)}회
+                                          </div>
+                                        </div>
+                                        <div className="rounded-lg border border-black bg-amber-50 p-2">
+                                          <div className="text-slate-500">총 월차</div>
+                                          <div>{balance.monthlyTotal === null ? '없음' : `${formatLeaveCount(balance.monthlyTotal)}회`}</div>
+                                        </div>
+                                        <div className="rounded-lg border border-black bg-white p-2">
+                                          <div className="text-slate-500">사용/잔여 월차</div>
+                                          <div>
+                                            {formatLeaveCount(balance.monthlyUsed)}회 / {balance.monthlyRemaining === null ? '없음' : `${formatLeaveCount(balance.monthlyRemaining)}회`}
+                                          </div>
+                                        </div>
+                                        <div className="rounded-lg border border-black bg-indigo-50 p-2 sm:col-span-4">
+                                          이번 신청: {formatLeaveCount(balance.requestConsumption)}회 · 올해 {balance.requestSequence}번째 신청 · 승인 후 {formatLeaveCount(balance.nextUsed)}회째 사용 / 잔여{' '}
+                                          {formatLeaveCount(balance.nextRemaining)}회
+                                        </div>
+                                      </div>
+                                    )}
+                                    <LeaveRequesterSignatureBox task={task} />
+                                    <div className="mt-1 text-xs font-black text-slate-500">요청시간: {formatKSTDateTime(task.created_at)}</div>
                                   </div>
-                                  <div className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{getLeaveReason(task)}</div>
-                                  <div className="mt-1 text-xs font-black text-slate-500">요청시간: {formatKSTDateTime(task.created_at)}</div>
-                                </div>
-                                <div className="flex gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => setLeaveSignatureTask(task)}
-                                    className="rounded-lg border-2 border-black bg-emerald-500 px-4 py-2 text-sm font-black text-white"
-                                  >
-                                    승인
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => updateLeaveApprovalStatus(task, LEAVE_REJECTED_STATUS)}
-                                    className="rounded-lg border-2 border-black bg-rose-500 px-4 py-2 text-sm font-black text-white"
-                                  >
-                                    부결
-                                  </button>
+                                  <div className="flex gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => setLeaveSignatureTask(task)}
+                                      className="rounded-lg border-2 border-black bg-emerald-500 px-4 py-2 text-sm font-black text-white"
+                                    >
+                                      승인
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => updateLeaveApprovalStatus(task, LEAVE_REJECTED_STATUS)}
+                                      className="rounded-lg border-2 border-black bg-rose-500 px-4 py-2 text-sm font-black text-white"
+                                    >
+                                      부결
+                                    </button>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       </div>
                     )}
