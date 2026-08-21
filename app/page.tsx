@@ -396,6 +396,37 @@ function buildLeaveSummaryRows(tasks: TaskRow[], leaveSummaryYear: string, calen
     .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
 }
 
+function getLeaveRequestConsumption(type: string, monthlyLimit: number | null) {
+  if (type === '반차') return 0.5
+  if (monthlyLimit !== null) return isLeaveType(type) ? 1 : 0
+  return type === '연차' ? 1 : 0
+}
+
+function getLeaveRequestSequence(tasks: TaskRow[], task: TaskRow) {
+  const employeeName = normalizeEmployeeName(task.user_name)
+  const taskDate = getTaskKSTDate(task)
+  if (!employeeName || !taskDate) return 0
+
+  const sameYearRequests = tasks
+    .filter((row) => {
+      if (!isLeaveType(row.type)) return false
+      if (getLeaveApprovalStatus(row) === LEAVE_REJECTED_STATUS) return false
+      if (normalizeEmployeeName(row.user_name) !== employeeName) return false
+
+      const rowDate = getTaskKSTDate(row)
+      return !!rowDate && rowDate.slice(0, 4) === taskDate.slice(0, 4)
+    })
+    .sort((a, b) => {
+      const aTime = new Date(a.created_at || '').getTime()
+      const bTime = new Date(b.created_at || '').getTime()
+      if (aTime !== bTime) return aTime - bTime
+      return a.id - b.id
+    })
+
+  const index = sameYearRequests.findIndex((row) => row.id === task.id)
+  return index >= 0 ? index + 1 : sameYearRequests.length + 1
+}
+
 function parseProductionManualItems(content?: string | null) {
   if (!content) return DEFAULT_PRODUCTION_MANUAL_ITEMS
 
@@ -964,6 +995,35 @@ export default function Home() {
 
     return personalLeaveSummaryRows.find((row) => normalizeEmployeeName(row.name) === myName) || null
   }, [personalLeaveSummaryRows, writerName])
+
+  const leaveSignatureSummary = useMemo(() => {
+    if (!leaveSignatureTask) return null
+
+    const employeeName = normalizeEmployeeName(leaveSignatureTask.user_name)
+    const requestDate = getTaskKSTDate(leaveSignatureTask)
+    if (!employeeName || !requestDate) return null
+
+    const summaryRow =
+      buildLeaveSummaryRows(tasks, requestDate.slice(0, 4), requestDate.slice(0, 7)).find((row) => normalizeEmployeeName(row.name) === employeeName) || null
+    if (!summaryRow) return null
+
+    const currentUsed = summaryRow.monthlyLimit === null ? summaryRow.annualConsumed : summaryRow.monthlyConsumed
+    const requestConsumption = getLeaveRequestConsumption(leaveSignatureTask.type, summaryRow.monthlyLimit)
+    const nextUsed = currentUsed + requestConsumption
+    const nextRemaining = summaryRow.remaining - requestConsumption
+
+    return {
+      employeeName,
+      limit: summaryRow.monthlyLimit ?? summaryRow.annualLimit,
+      basisLabel: summaryRow.monthlyLimit === null ? '연차 기준' : '월차 기준',
+      currentUsed,
+      currentRemaining: summaryRow.remaining,
+      requestConsumption,
+      nextUsed,
+      nextRemaining,
+      requestSequence: getLeaveRequestSequence(tasks, leaveSignatureTask),
+    }
+  }, [tasks, leaveSignatureTask])
 
   const handleDailySubmit = async () => {
     if (!writerName.trim()) {
@@ -3142,7 +3202,7 @@ export default function Home() {
 
       {leaveSignatureTask && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[120] p-4 text-black font-bold">
-          <div className="w-full max-w-xl rounded-2xl border-4 border-black bg-white p-5">
+          <div className="max-h-[calc(100vh-2rem)] w-full max-w-xl overflow-y-auto rounded-2xl border-4 border-black bg-white p-5">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
               <div>
                 <h2 className="text-xl font-black text-emerald-700">✍️ 연차 승인 사인</h2>
@@ -3161,6 +3221,41 @@ export default function Home() {
                 닫기
               </button>
             </div>
+
+            {leaveSignatureSummary && (
+              <div className="mb-4 rounded-xl border-2 border-black bg-amber-50 p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <div className="font-black text-amber-800">{leaveSignatureSummary.employeeName} 연차 현황</div>
+                  <div className="rounded-full border border-black bg-white px-3 py-1 text-xs font-black">
+                    {leaveSignatureSummary.basisLabel} · 총 {formatLeaveCount(leaveSignatureSummary.limit)}회
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-lg border-2 border-black bg-white p-3">
+                    <div className="text-xs font-black text-slate-500">현재 사용</div>
+                    <div className="mt-1 text-xl font-black text-rose-600">{formatLeaveCount(leaveSignatureSummary.currentUsed)}회</div>
+                  </div>
+                  <div className="rounded-lg border-2 border-black bg-white p-3">
+                    <div className="text-xs font-black text-slate-500">현재 잔여</div>
+                    <div className="mt-1 text-xl font-black text-emerald-700">{formatLeaveCount(leaveSignatureSummary.currentRemaining)}회</div>
+                  </div>
+                  <div className="rounded-lg border-2 border-black bg-white p-3">
+                    <div className="text-xs font-black text-slate-500">이번 신청</div>
+                    <div className="mt-1 text-xl font-black text-amber-700">
+                      {formatLeaveCount(leaveSignatureSummary.requestConsumption)}회
+                    </div>
+                    <div className="text-[11px] font-black text-slate-500">올해 {leaveSignatureSummary.requestSequence}번째 신청</div>
+                  </div>
+                  <div className="rounded-lg border-2 border-black bg-white p-3">
+                    <div className="text-xs font-black text-slate-500">승인 후</div>
+                    <div className="mt-1 text-xl font-black text-indigo-700">
+                      {formatLeaveCount(leaveSignatureSummary.nextUsed)}회째 사용
+                    </div>
+                    <div className="text-[11px] font-black text-slate-500">잔여 {formatLeaveCount(leaveSignatureSummary.nextRemaining)}회</div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="mb-4 rounded-xl border-2 border-black bg-slate-50 p-3">
               <div className="text-xs font-black text-slate-500">사유</div>
