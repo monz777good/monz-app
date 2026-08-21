@@ -72,6 +72,16 @@ type LeaveApprovalSignaturePayload = {
   imageDataUrl: string
 }
 
+type LeaveRequestPayload = {
+  kind: 'leave-request'
+  reason: string
+  requesterSignature?: {
+    signer: string
+    signedAt: string
+    imageDataUrl: string
+  }
+}
+
 type AcupunctureRecipe = {
   id: string
   title: string
@@ -161,6 +171,40 @@ function parseLeaveApprovalSignature(value?: string | null) {
   }
 
   return null
+}
+
+function parseLeaveRequestPayload(content?: string | null) {
+  if (!content) return null
+
+  try {
+    const parsed = JSON.parse(content) as LeaveRequestPayload
+    if (parsed?.kind === 'leave-request') {
+      return {
+        kind: parsed.kind,
+        reason: String(parsed.reason || '').trim(),
+        requesterSignature:
+          parsed.requesterSignature?.imageDataUrl?.startsWith('data:image/')
+            ? {
+                signer: String(parsed.requesterSignature.signer || '').trim(),
+                signedAt: String(parsed.requesterSignature.signedAt || ''),
+                imageDataUrl: parsed.requesterSignature.imageDataUrl,
+              }
+            : undefined,
+      } satisfies LeaveRequestPayload
+    }
+  } catch {
+    return null
+  }
+
+  return null
+}
+
+function getLeaveReason(task: Pick<TaskRow, 'task_content'>) {
+  return parseLeaveRequestPayload(task.task_content)?.reason || task.task_content || ''
+}
+
+function getLeaveRequesterSignature(task: Pick<TaskRow, 'task_content'>) {
+  return parseLeaveRequestPayload(task.task_content)?.requesterSignature || null
 }
 
 function isInstructionType(type: string) {
@@ -673,6 +717,26 @@ function LeaveApprovalSignatureBox({ task }: { task: Pick<TaskRow, 'instruction_
   )
 }
 
+function LeaveRequesterSignatureBox({ task }: { task: Pick<TaskRow, 'task_content'> }) {
+  const signature = getLeaveRequesterSignature(task)
+  if (!signature) return null
+
+  return (
+    <div className="mt-3 rounded-xl border-2 border-black bg-rose-50 p-3">
+      <div className="mb-2 text-xs font-black text-rose-700">직원 신청 사인</div>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="h-16 w-40 rounded-lg border-2 border-rose-700 bg-white p-2">
+          <img src={signature.imageDataUrl} alt="직원 신청 사인" className="h-full w-full object-contain" />
+        </div>
+        <div className="text-xs font-black text-slate-600">
+          <div>{signature.signer || '신청 직원'}</div>
+          <div>{formatKSTDateTime(signature.signedAt)}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Home() {
   const today = useMemo(() => getKSTDateString(), [])
 
@@ -697,6 +761,10 @@ export default function Home() {
   const [hasLeaveSignatureStroke, setHasLeaveSignatureStroke] = useState(false)
   const leaveSignatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const isDrawingLeaveSignatureRef = useRef(false)
+  const [isDrawingLeaveRequesterSignature, setIsDrawingLeaveRequesterSignature] = useState(false)
+  const [hasLeaveRequesterSignatureStroke, setHasLeaveRequesterSignatureStroke] = useState(false)
+  const leaveRequesterSignatureCanvasRef = useRef<HTMLCanvasElement | null>(null)
+  const isDrawingLeaveRequesterSignatureRef = useRef(false)
 
   const [orderData, setOrderData] = useState({
     to: '',
@@ -874,6 +942,80 @@ export default function Home() {
   const endLeaveSignatureDraw = () => {
     isDrawingLeaveSignatureRef.current = false
     setIsDrawingLeaveSignature(false)
+  }
+
+  const prepareLeaveRequesterSignatureCanvas = useCallback(() => {
+    const canvas = leaveRequesterSignatureCanvasRef.current
+    if (!canvas) return
+
+    const context = canvas.getContext('2d')
+    if (!context) return
+
+    context.fillStyle = '#ffffff'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.strokeStyle = '#0f172a'
+    context.lineWidth = 4
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+  }, [])
+
+  const clearLeaveRequesterSignatureCanvas = useCallback(() => {
+    prepareLeaveRequesterSignatureCanvas()
+    setHasLeaveRequesterSignatureStroke(false)
+    setIsDrawingLeaveRequesterSignature(false)
+    isDrawingLeaveRequesterSignatureRef.current = false
+  }, [prepareLeaveRequesterSignatureCanvas])
+
+  useEffect(() => {
+    if (!showLeaveModal) return
+
+    setHasLeaveRequesterSignatureStroke(false)
+    setIsDrawingLeaveRequesterSignature(false)
+    isDrawingLeaveRequesterSignatureRef.current = false
+
+    const frame = window.requestAnimationFrame(prepareLeaveRequesterSignatureCanvas)
+    return () => window.cancelAnimationFrame(frame)
+  }, [showLeaveModal, prepareLeaveRequesterSignatureCanvas])
+
+  const getLeaveRequesterSignaturePoint = (clientX: number, clientY: number) => {
+    const canvas = leaveRequesterSignatureCanvasRef.current
+    if (!canvas) return null
+
+    const rect = canvas.getBoundingClientRect()
+    return {
+      x: ((clientX - rect.left) / rect.width) * canvas.width,
+      y: ((clientY - rect.top) / rect.height) * canvas.height,
+    }
+  }
+
+  const startLeaveRequesterSignatureDraw = (clientX: number, clientY: number) => {
+    const canvas = leaveRequesterSignatureCanvasRef.current
+    const point = getLeaveRequesterSignaturePoint(clientX, clientY)
+    const context = canvas?.getContext('2d')
+    if (!point || !context) return
+
+    context.beginPath()
+    context.moveTo(point.x, point.y)
+    isDrawingLeaveRequesterSignatureRef.current = true
+    setIsDrawingLeaveRequesterSignature(true)
+    setHasLeaveRequesterSignatureStroke(true)
+  }
+
+  const moveLeaveRequesterSignatureDraw = (clientX: number, clientY: number) => {
+    if (!isDrawingLeaveRequesterSignatureRef.current) return
+
+    const canvas = leaveRequesterSignatureCanvasRef.current
+    const point = getLeaveRequesterSignaturePoint(clientX, clientY)
+    const context = canvas?.getContext('2d')
+    if (!point || !context) return
+
+    context.lineTo(point.x, point.y)
+    context.stroke()
+  }
+
+  const endLeaveRequesterSignatureDraw = () => {
+    isDrawingLeaveRequesterSignatureRef.current = false
+    setIsDrawingLeaveRequesterSignature(false)
   }
 
   const evaluationStats = useMemo(() => {
@@ -1401,18 +1543,33 @@ export default function Home() {
       alert('날짜와 사유를 입력해주세요!')
       return
     }
+    const requesterSignatureCanvas = leaveRequesterSignatureCanvasRef.current
+    if (!hasLeaveRequesterSignatureStroke || !requesterSignatureCanvas) {
+      alert('신청자 사인을 작성해주세요!')
+      return
+    }
 
     setLoading(true)
+    const requestedAt = new Date().toISOString()
+    const leaveRequestPayload: LeaveRequestPayload = {
+      kind: 'leave-request',
+      reason: leaveData.content.trim(),
+      requesterSignature: {
+        signer: writerName.trim(),
+        signedAt: requestedAt,
+        imageDataUrl: requesterSignatureCanvas.toDataURL('image/png'),
+      },
+    }
 
     const { error } = await supabase.from('MONZ').insert([
       {
         user_name: writerName.trim(),
-        task_content: leaveData.content.trim(),
+        task_content: JSON.stringify(leaveRequestPayload),
         type: leaveData.type,
         leave_date: leaveData.date,
         target_name: '사장님',
         instruction_status: LEAVE_PENDING_STATUS,
-        created_at: new Date().toISOString(),
+        created_at: requestedAt,
       },
     ])
 
@@ -1425,6 +1582,7 @@ export default function Home() {
 
     alert('신청 완료! 사장님 승인 후 연차 현황에 반영됩니다.')
     setLeaveData({ type: '연차', content: '', date: today })
+    clearLeaveRequesterSignatureCanvas()
     setShowLeaveModal(false)
     await fetchTasks()
   }
@@ -2597,7 +2755,7 @@ export default function Home() {
                                   <div className="font-black">
                                     {task.user_name} · {task.type} · 신청일 {formatKSTDateOnly(task.leave_date)}
                                   </div>
-                                  <div className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{task.task_content}</div>
+                                  <div className="mt-1 whitespace-pre-wrap text-sm font-bold text-slate-700">{getLeaveReason(task)}</div>
                                   <div className="mt-1 text-xs font-black text-slate-500">요청시간: {formatKSTDateTime(task.created_at)}</div>
                                 </div>
                                 <div className="flex gap-2">
@@ -2705,7 +2863,7 @@ export default function Home() {
                                 <span className={`mt-2 inline-block text-xs font-black px-2 py-1 rounded-full border border-black ${statusColor(getLeaveApprovalStatus(task))}`}>
                                   상태: {getLeaveApprovalStatus(task)}
                                 </span>
-                                <div className="font-bold mt-1 whitespace-pre-wrap">{task.task_content}</div>
+                                <div className="font-bold mt-1 whitespace-pre-wrap">{getLeaveReason(task)}</div>
                                 <LeaveApprovalSignatureBox task={task} />
                               </div>
                               <div className="font-black text-sm whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
@@ -2775,7 +2933,7 @@ export default function Home() {
                       </span>
                     </div>
 
-                    <p className="font-bold whitespace-pre-wrap">{task.type === '주간계획' ? getWeeklyPlanContent(task) : task.task_content}</p>
+                    <p className="font-bold whitespace-pre-wrap">{task.type === '주간계획' ? getWeeklyPlanContent(task) : isLeaveType(task.type) ? getLeaveReason(task) : task.task_content}</p>
 
                     {isLeaveType(task.type) && getLeaveApprovalStatus(task) === LEAVE_PENDING_STATUS && (
                       <div className="mt-4 flex flex-wrap gap-2">
@@ -3259,7 +3417,8 @@ export default function Home() {
 
             <div className="mb-4 rounded-xl border-2 border-black bg-slate-50 p-3">
               <div className="text-xs font-black text-slate-500">사유</div>
-              <div className="mt-1 whitespace-pre-wrap">{leaveSignatureTask.task_content}</div>
+              <div className="mt-1 whitespace-pre-wrap">{getLeaveReason(leaveSignatureTask)}</div>
+              <LeaveRequesterSignatureBox task={leaveSignatureTask} />
             </div>
 
             <div className="overflow-hidden rounded-xl border-2 border-black bg-white">
@@ -3327,6 +3486,35 @@ export default function Home() {
               value={leaveData.content}
               onChange={(e) => setLeaveData({ ...leaveData, content: e.target.value })}
             />
+            <div className="mb-4 overflow-hidden rounded-lg border-2 border-black bg-white">
+              <div className="flex items-center justify-between border-b-2 border-black bg-rose-50 px-3 py-2">
+                <span className="font-black">신청자 사인</span>
+                <button type="button" onClick={clearLeaveRequesterSignatureCanvas} className="rounded-md bg-slate-200 px-3 py-1 text-xs font-black">
+                  지우기
+                </button>
+              </div>
+              <canvas
+                ref={leaveRequesterSignatureCanvasRef}
+                width={520}
+                height={150}
+                className="h-28 w-full touch-none bg-white"
+                onMouseDown={(event) => startLeaveRequesterSignatureDraw(event.clientX, event.clientY)}
+                onMouseMove={(event) => moveLeaveRequesterSignatureDraw(event.clientX, event.clientY)}
+                onMouseUp={endLeaveRequesterSignatureDraw}
+                onMouseLeave={endLeaveRequesterSignatureDraw}
+                onTouchStart={(event) => {
+                  event.preventDefault()
+                  const touch = event.touches[0]
+                  if (touch) startLeaveRequesterSignatureDraw(touch.clientX, touch.clientY)
+                }}
+                onTouchMove={(event) => {
+                  event.preventDefault()
+                  const touch = event.touches[0]
+                  if (touch) moveLeaveRequesterSignatureDraw(touch.clientX, touch.clientY)
+                }}
+                onTouchEnd={endLeaveRequesterSignatureDraw}
+              />
+            </div>
             <div className="flex gap-2">
               <button onClick={handleLeaveSubmit} className="flex-1 bg-rose-500 text-white py-3 rounded-lg">
                 신청
