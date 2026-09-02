@@ -2057,47 +2057,47 @@ export default function Home() {
   for (let d = 1; d <= daysInMonth; d++) calendarCells.push(`${calendarMonth}-${String(d).padStart(2, '0')}`)
 
   return (
-    <main className="min-h-screen bg-slate-50 py-10 px-4 font-sans text-slate-900">
-      <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div className="flex flex-wrap gap-3">
+    <main className="min-h-screen overflow-x-hidden bg-slate-50 px-3 py-5 font-sans text-slate-900 sm:px-4 sm:py-10">
+      <div className="mx-auto mb-4 max-w-5xl">
+        <div className="flex gap-2 overflow-x-auto pb-2 sm:flex-wrap sm:items-center sm:justify-between sm:gap-3 sm:overflow-visible sm:pb-0">
           <button
             onClick={() => (isOwnerView ? setShowOrderModal(true) : alert('사장님 PIN 인증부터 해주세요!'))}
-            className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+            className="min-w-max rounded-xl border-2 border-black bg-white px-3 py-3 text-xs font-bold shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] sm:p-4 sm:text-sm"
           >
             📢 사장님전용 업무지시
           </button>
           <button
             onClick={() => setShowEmployeeRequestModal(true)}
-            className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+            className="min-w-max rounded-xl border-2 border-black bg-white px-3 py-3 text-xs font-bold shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] sm:p-4 sm:text-sm"
           >
             🤝 직원용 업무요청
           </button>
-        </div>
         <button
           onClick={openProductionModal}
-          className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+          className="min-w-max rounded-xl border-2 border-black bg-white px-3 py-3 text-xs font-bold shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] sm:p-4 sm:text-sm"
         >
           ✅ 생산 메뉴얼 확인체크
         </button>
         <button
           onClick={() => setShowAcupunctureRecipeModal(true)}
-          className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+          className="min-w-max rounded-xl border-2 border-black bg-white px-3 py-3 text-xs font-bold shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] sm:p-4 sm:text-sm"
         >
           💉 약침 생산 레시피
         </button>
         <button
           onClick={() => setShowLeaveModal(true)}
-          className="bg-white p-4 rounded-xl border-2 border-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] font-bold text-sm"
+          className="min-w-max rounded-xl border-2 border-black bg-white px-3 py-3 text-xs font-bold shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] sm:p-4 sm:text-sm"
         >
           📅 연차/월차/반차
         </button>
+        </div>
       </div>
 
-      <header className="relative max-w-5xl mx-auto mb-6 bg-teal-700 rounded-[2rem] p-8 text-white text-center shadow-lg">
-        <h1 className="text-3xl font-bold text-white">한의N원외탕전</h1>
-        <div className="mt-4 text-xl font-black text-amber-300">{today} 업무보고 시스템</div>
+      <header className="relative mx-auto mb-5 max-w-5xl rounded-2xl bg-teal-700 p-5 text-center text-white shadow-lg sm:mb-6 sm:rounded-[2rem] sm:p-8">
+        <h1 className="text-2xl font-bold text-white sm:text-3xl">한의N원외탕전</h1>
+        <div className="mt-3 text-base font-black text-amber-300 sm:mt-4 sm:text-xl">{today} 업무보고 시스템</div>
         {myLeaveSummary && (
-          <div className="mt-5 inline-flex flex-col items-center rounded-2xl border-2 border-white/70 bg-white/10 px-4 py-3 text-sm font-black shadow-lg sm:absolute sm:right-6 sm:top-6 sm:mt-0 sm:items-end">
+          <div className="mt-4 inline-flex w-full max-w-xs flex-col items-center rounded-2xl border-2 border-white/70 bg-white/10 px-4 py-3 text-sm font-black shadow-lg sm:absolute sm:right-6 sm:top-6 sm:mt-0 sm:w-auto sm:items-end">
             <span className="text-xs text-teal-50">{myLeaveSummary.monthlyLimit === null ? '내 연차' : '내 월차'}</span>
             <span className="text-white">
               사용 {formatLeaveCount(myLeaveSummary.monthlyLimit === null ? myLeaveSummary.annualConsumed : myLeaveSummary.monthlyConsumed)}회 / 잔여 {formatLeaveCount(myLeaveSummary.remaining)}회
@@ -2318,7 +2318,7 @@ export default function Home() {
           <div className="bg-white border-2 border-black rounded-2xl p-5 shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-xl font-black text-indigo-700">📚 주간계획 검토 기록</h2>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex max-w-full gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible sm:pb-0">
                 {[
                   { value: 'week', label: '이번주' },
                   { value: 'month', label: '이번달' },
@@ -2329,7 +2329,7 @@ export default function Home() {
                     key={option.value}
                     type="button"
                     onClick={() => setWeeklyReviewerHistoryRange(option.value as 'week' | 'month' | 'year' | 'all')}
-                    className={`rounded-lg border-2 border-black px-3 py-2 text-sm font-black ${
+                    className={`min-w-max rounded-lg border-2 border-black px-3 py-2 text-sm font-black ${
                       weeklyReviewerHistoryRange === option.value ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-black'
                     }`}
                   >
@@ -2532,12 +2532,12 @@ export default function Home() {
 
             {isOwnerView && (
               <>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex max-w-full gap-2 overflow-x-auto pb-2 sm:flex-wrap sm:overflow-visible sm:pb-0">
                   {(['전체', '일일업무', '주간계획', '연차/월차/반차', '업무지시', '업무요청', '생산체크'] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setOwnerTab(tab)}
-                      className={`px-4 py-2 rounded-xl border-2 border-black font-bold ${ownerTab === tab ? 'bg-teal-700 text-white' : 'bg-white'}`}
+                      className={`min-w-max px-4 py-2 rounded-xl border-2 border-black font-bold ${ownerTab === tab ? 'bg-teal-700 text-white' : 'bg-white'}`}
                     >
                       {tab}
                       {tab === '연차/월차/반차' && pendingLeaveRequests.length > 0 && (
@@ -2663,30 +2663,34 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <div className="rounded-2xl border-2 border-black overflow-hidden">
-                      <div className="grid grid-cols-5 bg-slate-900 text-white text-center font-black text-sm">
-                        <div className="p-3 text-left">직원명</div>
-                        <div className="p-3">○</div>
-                        <div className="p-3">△</div>
-                        <div className="p-3">✕</div>
-                        <div className="p-3">총 평가</div>
-                      </div>
-
-                      {evaluationStats.employeeRows.length === 0 ? (
-                        <div className="p-5 text-center font-bold text-slate-400">
-                          {evaluationMode === 'month' ? '이 달에 평가된 업무지시/요청이 없습니다.' : '이 연도에 평가된 업무지시/요청이 없습니다.'}
-                        </div>
-                      ) : (
-                        evaluationStats.employeeRows.map((row) => (
-                          <div key={row.name} className="grid grid-cols-5 text-center border-t-2 border-black font-bold bg-white">
-                            <div className="p-3 text-left font-black">{row.name}</div>
-                            <div className="p-3 text-emerald-600 font-black">{row.circle}</div>
-                            <div className="p-3 text-amber-500 font-black">{row.triangle}</div>
-                            <div className="p-3 text-rose-500 font-black">{row.x}</div>
-                            <div className="p-3 font-black">{row.total}</div>
+                    <div className="overflow-hidden rounded-2xl border-2 border-black">
+                      <div className="overflow-x-auto">
+                        <div className="min-w-[520px]">
+                          <div className="grid grid-cols-5 bg-slate-900 text-center text-sm font-black text-white">
+                            <div className="p-3 text-left">직원명</div>
+                            <div className="p-3">○</div>
+                            <div className="p-3">△</div>
+                            <div className="p-3">✕</div>
+                            <div className="p-3">총 평가</div>
                           </div>
-                        ))
-                      )}
+
+                          {evaluationStats.employeeRows.length === 0 ? (
+                            <div className="p-5 text-center font-bold text-slate-400">
+                              {evaluationMode === 'month' ? '이 달에 평가된 업무지시/요청이 없습니다.' : '이 연도에 평가된 업무지시/요청이 없습니다.'}
+                            </div>
+                          ) : (
+                            evaluationStats.employeeRows.map((row) => (
+                              <div key={row.name} className="grid grid-cols-5 border-t-2 border-black bg-white text-center font-bold">
+                                <div className="p-3 text-left font-black">{row.name}</div>
+                                <div className="p-3 font-black text-emerald-600">{row.circle}</div>
+                                <div className="p-3 font-black text-amber-500">{row.triangle}</div>
+                                <div className="p-3 font-black text-rose-500">{row.x}</div>
+                                <div className="p-3 font-black">{row.total}</div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2899,43 +2903,47 @@ export default function Home() {
                         </span>
                       </div>
 
-                      <div className="grid grid-cols-[1.25fr_1fr_0.8fr_0.8fr_0.8fr_1fr] bg-slate-900 text-center text-xs font-black text-white sm:text-sm">
-                        <div className="p-3 text-left">이름</div>
-                        <div className="p-3">사용 합계</div>
-                        <div className="p-3">연차</div>
-                        <div className="p-3">반차</div>
-                        <div className="p-3">월차</div>
-                        <div className="p-3">잔여</div>
-                      </div>
-
-                      {leaveSummaryRows.length === 0 ? (
-                        <div className="p-5 text-center font-bold text-slate-400">이 연도에 표시할 직원 기록이 없습니다.</div>
-                      ) : (
-                        leaveSummaryRows.map((row) => (
-                          <div key={row.name} className="grid grid-cols-[1.25fr_1fr_0.8fr_0.8fr_0.8fr_1fr] border-t-2 border-black bg-white text-center text-sm font-bold">
-                            <div className="truncate p-3 text-left font-black">{row.name}</div>
-                            <div className="p-3 text-rose-600 font-black">
-                              {formatLeaveCount(row.monthlyLimit === null ? row.annualConsumed : row.monthlyConsumed)}회
-                              {row.priorUsed > 0 && <div className="text-[10px] text-slate-500">기존 {formatLeaveCount(row.priorUsed)}회</div>}
-                              {row.monthlyLimit !== null && <div className="text-[10px] text-slate-500">월차 기준 {formatLeaveCount(row.monthlyLimit)}회</div>}
-                            </div>
-                            <div className="p-3 text-rose-600 font-black">{formatLeaveCount(row.annualUsed)}회</div>
-                            <div className="p-3 text-amber-600 font-black">{formatLeaveCount(row.halfUsed)}회</div>
-                            <div className="p-3 text-slate-700 font-black">{formatLeaveCount(row.monthlyUsed)}회</div>
-                            <div className={`p-3 font-black ${row.remaining <= 2 ? 'text-rose-600' : 'text-emerald-600'}`}>{formatLeaveCount(row.remaining)}회</div>
+                      <div className="overflow-x-auto">
+                        <div className="min-w-[680px]">
+                          <div className="grid grid-cols-[1.25fr_1fr_0.8fr_0.8fr_0.8fr_1fr] bg-slate-900 text-center text-xs font-black text-white sm:text-sm">
+                            <div className="p-3 text-left">이름</div>
+                            <div className="p-3">사용 합계</div>
+                            <div className="p-3">연차</div>
+                            <div className="p-3">반차</div>
+                            <div className="p-3">월차</div>
+                            <div className="p-3">잔여</div>
                           </div>
-                        ))
-                      )}
+
+                          {leaveSummaryRows.length === 0 ? (
+                            <div className="p-5 text-center font-bold text-slate-400">이 연도에 표시할 직원 기록이 없습니다.</div>
+                          ) : (
+                            leaveSummaryRows.map((row) => (
+                              <div key={row.name} className="grid grid-cols-[1.25fr_1fr_0.8fr_0.8fr_0.8fr_1fr] border-t-2 border-black bg-white text-center text-sm font-bold">
+                                <div className="truncate p-3 text-left font-black">{row.name}</div>
+                                <div className="p-3 font-black text-rose-600">
+                                  {formatLeaveCount(row.monthlyLimit === null ? row.annualConsumed : row.monthlyConsumed)}회
+                                  {row.priorUsed > 0 && <div className="text-[10px] text-slate-500">기존 {formatLeaveCount(row.priorUsed)}회</div>}
+                                  {row.monthlyLimit !== null && <div className="text-[10px] text-slate-500">월차 기준 {formatLeaveCount(row.monthlyLimit)}회</div>}
+                                </div>
+                                <div className="p-3 font-black text-rose-600">{formatLeaveCount(row.annualUsed)}회</div>
+                                <div className="p-3 font-black text-amber-600">{formatLeaveCount(row.halfUsed)}회</div>
+                                <div className="p-3 font-black text-slate-700">{formatLeaveCount(row.monthlyUsed)}회</div>
+                                <div className={`p-3 font-black ${row.remaining <= 2 ? 'text-rose-600' : 'text-emerald-600'}`}>{formatLeaveCount(row.remaining)}회</div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="grid grid-cols-7 gap-2 mb-4 text-center font-black">
+                    <div className="mb-3 grid grid-cols-7 gap-1 text-center text-sm font-black sm:mb-4 sm:gap-2 sm:text-base">
                       {['일', '월', '화', '수', '목', '금', '토'].map((day) => (
                         <div key={day} className="py-2">
                           {day}
                         </div>
                       ))}
                     </div>
-                    <div className="grid grid-cols-7 gap-2">
+                    <div className="grid grid-cols-7 gap-1 sm:gap-2">
                       {calendarCells.map((date, idx) => {
                         const count = date ? leaveTaskMap[date]?.length || 0 : 0
                         const selected = date === selectedCalendarDate
@@ -2944,14 +2952,14 @@ export default function Home() {
                             key={`${date}-${idx}`}
                             disabled={!date}
                             onClick={() => date && setSelectedCalendarDate(date)}
-                            className={`min-h-[74px] rounded-xl border-2 p-2 text-left ${
+                            className={`min-h-[48px] rounded-lg border-2 p-1 text-left text-xs sm:min-h-[74px] sm:rounded-xl sm:p-2 sm:text-base ${
                               !date ? 'border-transparent bg-transparent' : selected ? 'border-rose-500 bg-rose-50' : 'border-black bg-white'
                             }`}
                           >
                             {date && (
                               <>
                                 <div className="font-black">{Number(date.slice(-2))}</div>
-                                {count > 0 && <div className="mt-2 inline-block rounded-full bg-rose-500 text-white text-xs px-2 py-1 font-black">{count}건</div>}
+                                {count > 0 && <div className="mt-1 inline-block rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-black text-white sm:mt-2 sm:px-2 sm:py-1 sm:text-xs">{count}건</div>}
                               </>
                             )}
                           </button>
@@ -2965,8 +2973,8 @@ export default function Home() {
                           <div className="font-bold text-slate-400">이 날짜의 연차/월차/반차 신청이 없습니다.</div>
                         ) : (
                           (leaveTaskMap[selectedCalendarDate] || []).map((task) => (
-                            <div key={task.id} className="rounded-xl border-2 border-black bg-white p-3 flex justify-between gap-4">
-                              <div>
+                            <div key={task.id} className="flex flex-col gap-2 rounded-xl border-2 border-black bg-white p-3 sm:flex-row sm:justify-between sm:gap-4">
+                              <div className="min-w-0">
                                 <div className="font-black">
                                   [{task.type}] {task.user_name}
                                 </div>
@@ -2976,7 +2984,7 @@ export default function Home() {
                                 <div className="font-bold mt-1 whitespace-pre-wrap">{getLeaveReason(task)}</div>
                                 <LeaveApprovalSignatureBox task={task} />
                               </div>
-                              <div className="font-black text-sm whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
+                              <div className="text-sm font-black text-slate-500 sm:whitespace-nowrap">{formatKSTDateTime(task.created_at)}</div>
                             </div>
                           ))
                         )}
@@ -3298,20 +3306,24 @@ export default function Home() {
                         <span>생산자: {payload?.producer}</span>
                         <span className="text-slate-500">{formatKSTDateTime(task.created_at)}</span>
                       </div>
-                      <div className="grid grid-cols-[1fr_64px_78px_1fr] bg-slate-900 text-center text-xs font-black text-white">
-                        <div className="p-2 text-left">체크 항목</div>
-                        <div className="p-2">예</div>
-                        <div className="p-2">아니오</div>
-                        <div className="p-2 text-left">비고</div>
-                      </div>
-                      {payload?.answers.map((answer) => (
-                        <div key={answer.itemId} className="grid grid-cols-[1fr_64px_78px_1fr] border-t border-slate-300 bg-white text-center">
-                          <div className="p-2 text-left font-bold">{answer.text}</div>
-                          <div className={`p-2 font-black ${answer.answer === '예' ? 'text-emerald-600' : 'text-slate-300'}`}>{answer.answer === '예' ? '✓' : '-'}</div>
-                          <div className={`p-2 font-black ${answer.answer === '아니오' ? 'text-rose-600' : 'text-slate-300'}`}>{answer.answer === '아니오' ? '✓' : '-'}</div>
-                          <div className="p-2 text-left font-bold text-slate-600">{answer.note || '-'}</div>
+                      <div className="overflow-x-auto">
+                        <div className="min-w-[620px]">
+                          <div className="grid grid-cols-[1fr_64px_78px_1fr] bg-slate-900 text-center text-xs font-black text-white">
+                            <div className="p-2 text-left">체크 항목</div>
+                            <div className="p-2">예</div>
+                            <div className="p-2">아니오</div>
+                            <div className="p-2 text-left">비고</div>
+                          </div>
+                          {payload?.answers.map((answer) => (
+                            <div key={answer.itemId} className="grid grid-cols-[1fr_64px_78px_1fr] border-t border-slate-300 bg-white text-center">
+                              <div className="p-2 text-left font-bold">{answer.text}</div>
+                              <div className={`p-2 font-black ${answer.answer === '예' ? 'text-emerald-600' : 'text-slate-300'}`}>{answer.answer === '예' ? '✓' : '-'}</div>
+                              <div className={`p-2 font-black ${answer.answer === '아니오' ? 'text-rose-600' : 'text-slate-300'}`}>{answer.answer === '아니오' ? '✓' : '-'}</div>
+                              <div className="p-2 text-left font-bold text-slate-600">{answer.note || '-'}</div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      </div>
                     </div>
                   ))}
                 </div>
